@@ -1,0 +1,159 @@
+
+services:
+
+    mlflow-db:
+        restart: always
+        image: postgres:14-alpine
+        container_name: mlflow-db
+        env_file:
+          - ./.env
+        environment:
+          - POSTGRES_DB=${POSTGRES_DB}
+          - POSTGRES_USER=${POSTGRES_USER}
+          - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+          - APP_DB_USER=${APP_DB_USER}
+          - APP_DB_PASSWORD=${APP_DB_PASSWORD}
+        ports:
+          - 5432:5432
+        volumes:
+          - db-volume:/var/lib/postgresql/data
+          - ./database/backups:/backups:ro
+          - ./database/config/pga_hba.conf:/postgres_data/postgresql/data/pg_hba.conf
+          - ./database/config/postgresql.conf:/postgres_data/postgresql/data/postgresql.conf
+          - ./database/init:/docker-entrypoint-initdb.d/
+        networks:
+          mlflow-network:
+
+    minio:
+        restart: always
+        ports:
+          - 9000:9000
+          - 9001:9001
+        image: minio/minio
+        env_file:
+          - ./.env
+        environment:
+          - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+          - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+          - MINIO_VOLUMES=${MINIO_VOLUMES}
+        container_name: mlflow_s3
+        command: server --console-address ':9001' --address ':9000'
+        networks:
+          - mlflow-network
+        volumes:
+          - ./minio/data-1:/data-1
+          - ./minio/data-2:/data-2
+          - ./minio/data-3:/data-3
+          - ./minio/data-4:/data-4
+          - ./minio/data-5:/data-5
+          - ./minio/data-6:/data-6
+
+    mc:
+        image: minio/mc
+        depends_on:
+          - minio
+        container_name: mc
+        env_file:
+          - ./.env
+        environment:
+          - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+          - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+          - MLFLOW_S3_ENDPOINT_URL=${MLFLOW_S3_ENDPOINT_URL}
+          - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+          - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+        entrypoint: >
+          /bin/sh -c "
+          /tmp/wait-for-it.sh minio:9000 &&
+          /usr/bin/mc alias set minio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} &&
+          /usr/bin/mc mb minio/mlflow;
+          exit 0;
+          "
+        volumes:
+          - ./tracking/wait-for-it.sh:/tmp/wait-for-it.sh
+        networks:
+          - mlflow-network
+
+    app:
+        restart: always
+        env_file:
+          - ./.env
+        environment:
+          - MLFLOW_USERNAME=${MLFLOW_USERNAME}
+          - MLFLOW_PASSWORD=${MLFLOW_PASSWORD}
+          - POSTGRES_USER=${POSTGRES_USER}
+          - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+          - APP_DB=${APP_DB}
+        build: ./tracking
+        image: mlflow/mlflow
+        container_name: mlflow_server
+        depends_on:
+          - mc
+          - mlflow-db
+        command: >
+          /bin/sh -c "
+          mlflow server \
+          --backend-store-uri postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@mlflow-db:5432/${APP_DB} \
+          --default-artifact-root s3://mlflow/ \
+          --host 0.0.0.0 \
+          --workers 12
+          "
+        networks:
+          - mlflow-network
+        ports:
+         - 5001:5000
+
+    caddy:
+      container_name: caddy
+      image: caddy:latest
+      env_file:
+        - ./.env
+      environment:
+        - DOMAIN=${DOMAIN}
+        - DDNS_DOMAIN=${DDNS_DOMAIN}
+        - LOCAL_DOMAIN=${LOCAL_DOMAIN}
+        - EMAIL=${EMAIL}
+        - VIRTUAL_HOST=${DOMAIN}
+        - LETSENCRYPT_HOST=${DOMAIN}
+        - MLFLOW_USERNAME=${MLFLOW_USERNAME}
+        - MLFLOW_HASH_PASSWORD=${MLFLOW_HASH_PASSWORD}
+        #- MINIO_DOMAIN=${MINIO_SERVER_URL}
+        - TIMEZONE=${TIMEZONE}
+      ports:
+        - 80:80
+        - 443:443
+      volumes:
+        - ./caddy/Caddyfile:/etc/caddy/Caddyfile
+        - caddy_data:/data
+        - caddy_config:/config
+      networks:
+        - mlflow-network
+      depends_on:
+        - app
+
+    ddclient:
+      image: lscr.io/linuxserver/ddclient:latest
+      container_name: ddclient
+      env_file:
+        - ./.env
+      environment:
+        - TZ=Etc/UTC
+        - DDCLIENT_USER=${DDCLIENT_USER}
+        - DDCLIENT_PASSWORD=${DDCLIENT_PASSWORD}
+      volumes:
+        - ./ddclient/ddclient.conf:/config/ddclient.conf
+      restart: unless-stopped
+
+volumes:
+  db-volume:
+  caddy_config:
+  caddy_data:
+  minio_volume_1:
+  minio_volume_2:
+  minio_volume_3:
+  minio_volume_4:
+  minio_volume_5:
+  minio_volume_6:
+
+networks:
+  mlflow-network:
+    driver: bridge
