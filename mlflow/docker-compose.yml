@@ -35,12 +35,12 @@ services:
           - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
           - MINIO_VOLUMES=${MINIO_VOLUMES}
         volumes:
-          - ./minio/data-1:/data-1
-          - ./minio/data-2:/data-2
-          - ./minio/data-3:/data-3
-          - ./minio/data-4:/data-4
-          - ./minio/data-5:/data-5
-          - ./minio/data-6:/data-6
+          - minio_volume_1:/data-1
+          - minio_volume_2:/data-2
+          - minio_volume_3:/data-3
+          - minio_volume_4:/data-4
+          - minio_volume_5:/data-5
+          - minio_volume_6:/data-6
         ports:
           - 9000:9000
           - 9001:9001
