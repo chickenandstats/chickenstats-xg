@@ -22,10 +22,6 @@ def prep_data(data, strengths):
     Strengths can be: even, powerplay, shorthanded, empty_for, empty_against
     """
 
-    mean_shot_distances = pd.read_csv(
-        Path("./pkg_files/mean_shot_distances.csv"), index_col=0
-    )
-
     df = data.copy()
 
     events = [
@@ -123,91 +119,6 @@ def prep_data(data, strengths):
 
     df["position_group"] = np.select(conds, values)
 
-    shot_list = [
-        "WRIST",
-        "SNAP",
-        "SLAP",
-    ]
-
-    conds = [
-        np.logical_and.reduce(
-            [
-                df.coords_x >= 0,
-                df.coords_y >= -9,
-                df.player_1_hand == "L",
-                df.zone == "OFF",
-                df.shot_type.isin(shot_list),
-            ]
-        ),
-        np.logical_and.reduce(
-            [
-                df.coords_x <= 0,
-                df.coords_y <= 9,
-                df.player_1_hand == "L",
-                df.zone == "OFF",
-                df.shot_type.isin(shot_list),
-            ]
-        ),
-        np.logical_and.reduce(
-            [
-                df.coords_x >= 0,
-                df.coords_y >= -9,
-                df.player_1_hand == "R",
-                df.zone == "OFF",
-                df.shot_type.isin(["BACKHAND", "WRAP-AROUND"]),
-            ]
-        ),
-        np.logical_and.reduce(
-            [
-                df.coords_x <= 0,
-                df.coords_y <= 9,
-                df.player_1_hand == "R",
-                df.zone == "OFF",
-                df.shot_type.isin(["BACKHAND", "WRAP-AROUND"]),
-            ]
-        ),
-        np.logical_and.reduce(
-            [
-                df.coords_x >= 0,
-                df.coords_y <= 9,
-                df.player_1_hand == "R",
-                df.zone == "OFF",
-                df.shot_type.isin(shot_list),
-            ]
-        ),
-        np.logical_and.reduce(
-            [
-                df.coords_x <= 0,
-                df.coords_y >= -9,
-                df.player_1_hand == "R",
-                df.zone == "OFF",
-                df.shot_type.isin(shot_list),
-            ]
-        ),
-        np.logical_and.reduce(
-            [
-                df.coords_x >= 0,
-                df.coords_y <= 22,
-                df.player_1_hand == "L",
-                df.zone == "OFF",
-                df.shot_type.isin(["BACKHAND", "WRAP-AROUND"]),
-            ]
-        ),
-        np.logical_and.reduce(
-            [
-                df.coords_x <= 0,
-                df.coords_y >= -9,
-                df.player_1_hand == "L",
-                df.zone == "OFF",
-                df.shot_type.isin(["BACKHAND", "WRAP-AROUND"]),
-            ]
-        ),
-    ]
-
-    values = [1, 1, 1, 1, 1, 1, 1, 1]
-
-    # df['shooter_good_hand'] = np.select(conds, values, 0)
-
     conds = [
         np.logical_and.reduce(
             [
@@ -269,16 +180,9 @@ def prep_data(data, strengths):
 
     df["rush_attempt"] = np.where(conds, 1, 0)
 
-    merge_cols = ["position_group", "shot_type", "strength_state"]
-
-    df = df.copy().merge(mean_shot_distances, on=merge_cols, how="left")
-
-    df["shot_distance_from_mean"] = df.event_distance - df.mean_shot_distance
-
     cat_cols = [
         "strength_state",
         "position_group",
-        "opp_goalie_catches",
         "event_type_last",
     ]
 
@@ -416,7 +320,7 @@ def prep_data(data, strengths):
         "position_group",
         # "shooter_good_hand",
         "shot_distance_from_mean",
-        # "event_distance",
+        "event_distance",
         "event_angle",
         "is_rebound",
         "rush_attempt",
