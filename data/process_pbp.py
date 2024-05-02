@@ -101,7 +101,7 @@ def prep_data(data, strengths):
 
     df = df.copy().merge(shot_types, left_index=True, right_index=True, how="outer")
 
-    df.score_diff = np.where(df.event == "GOAL", df.score_diff - 1, df.score_diff)
+    #df.score_diff = np.where(df.event == "GOAL", df.score_diff - 1, df.score_diff)
 
     conds = [df.score_diff > 4, df.score_diff < -4]
 
@@ -346,15 +346,15 @@ def prep_data(data, strengths):
         "seconds_since_last",
         "event_type_last",
         "distance_from_last",
-        # "prior_shot_same",
-        # "prior_miss_same",
+        "prior_shot_same",
+        "prior_miss_same",
         "prior_block_same",
         "prior_give_same",
         "prior_take_same",
         "prior_hit_same",
         "prior_shot_opp",
         "prior_miss_opp",
-        # "prior_block_opp",
+        "prior_block_opp",
         "prior_give_opp",
         "prior_take_opp",
         "prior_hit_opp",
