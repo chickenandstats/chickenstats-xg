@@ -67,8 +67,8 @@ def prep_data(data, strengths):
     df["same_team_last"] = np.where(np.equal(df.event_team, df.event_team_last), 1, 0)
 
     df["distance_from_last"] = (
-        (df.coords_x - df.coords_x_last) ** 2 + (df.coords_y - df.coords_y_last) ** 2
-    ) ** (1 / 2)
+                                       (df.coords_x - df.coords_x_last) ** 2 + (df.coords_y - df.coords_y_last) ** 2
+                               ) ** (1 / 2)
 
     last_is_shot = np.equal(df.event_type_last, "SHOT")
     last_is_miss = np.equal(df.event_type_last, "MISS")
@@ -97,11 +97,14 @@ def prep_data(data, strengths):
 
     df["prior_face"] = np.where(last_is_fac, 1, 0)
 
-    shot_types = pd.get_dummies(df.shot_type, dtype=int)
+    shot_types = (pd.get_dummies(df.shot_type, dtype=int))
+
+    shot_types = shot_types.rename(
+        columns={x: x.lower().replace('-', '_').replace(' ', '_') for x in shot_types.columns})
 
     df = df.copy().merge(shot_types, left_index=True, right_index=True, how="outer")
 
-    #df.score_diff = np.where(df.event == "GOAL", df.score_diff - 1, df.score_diff)
+    # df.score_diff = np.where(df.event == "GOAL", df.score_diff - 1, df.score_diff)
 
     conds = [df.score_diff > 4, df.score_diff < -4]
 
@@ -227,7 +230,7 @@ def prep_data(data, strengths):
         df = df.loc[conds]
 
         drop_cols = [
-            x for x in df.columns if "strength_state_" in x and x not in strengths_list
+            x for x in df.columns if "strength_state_" in x and x not in [f'strength_state_{x}' for x in strengths_list]
         ]
 
         df = df.drop(drop_cols, axis=1, errors="ignore")
@@ -244,7 +247,7 @@ def prep_data(data, strengths):
         df = df.loc[conds]
 
         drop_cols = [
-            x for x in df.columns if "strength_state_" in x and x not in strengths_list
+            x for x in df.columns if "strength_state_" in x and x not in [f'strength_state_{x}' for x in strengths_list]
         ]
 
         df = df.drop(drop_cols, axis=1, errors="ignore")
@@ -261,7 +264,7 @@ def prep_data(data, strengths):
         df = df.loc[conds]
 
         drop_cols = [
-            x for x in df.columns if "strength_state_" in x and x not in strengths_list
+            x for x in df.columns if "strength_state_" in x and x not in [f'strength_state_{x}' for x in strengths_list]
         ]
 
         df = df.drop(drop_cols, axis=1, errors="ignore")
@@ -278,7 +281,7 @@ def prep_data(data, strengths):
         df = df.loc[conds]
 
         drop_cols = [
-            x for x in df.columns if "strength_state_" in x and x not in strengths_list
+            x for x in df.columns if "strength_state_" in x and x not in [f'strength_state_{x}' for x in strengths_list]
         ]
 
         df = df.drop(drop_cols, axis=1, errors="ignore")
@@ -286,17 +289,17 @@ def prep_data(data, strengths):
     df = df.drop(cat_cols, axis=1, errors="ignore")
 
     cols = [
-        "BACKHAND",
-        "BAT",
-        "BETWEEN LEGS",
-        "CRADLE",
-        "DEFLECTED",
-        "POKE",
-        "SLAP",
-        "SNAP",
-        "TIP-IN",
-        "WRAP-AROUND",
-        "WRIST",
+        "backhand",
+        "bat",
+        "between_legs",
+        "cradle",
+        "deflected",
+        "poke",
+        "slap",
+        "snap",
+        "tip_in",
+        "wrap_around",
+        "wrist",
     ]
 
     for col in cols:
@@ -359,17 +362,17 @@ def prep_data(data, strengths):
         "prior_take_opp",
         "prior_hit_opp",
         "prior_face",
-        "BACKHAND",
-        "BAT",
-        "BETWEEN LEGS",
-        "CRADLE",
-        "DEFLECTED",
-        "POKE",
-        "SLAP",
-        "SNAP",
-        "TIP-IN",
-        "WRAP-AROUND",
-        "WRIST",
+        "backhand",
+        "bat",
+        "between_legs",
+        "cradle",
+        "deflected",
+        "poke",
+        "slap",
+        "snap",
+        "tip_in",
+        "wrap_around",
+        "wrist",
         "strength_state_3v3",
         "strength_state_4v4",
         "strength_state_5v5",
