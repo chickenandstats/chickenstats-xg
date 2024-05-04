@@ -6,8 +6,6 @@ import numpy as np
 
 from pathlib import Path
 
-import os
-
 from tqdm.auto import tqdm
 
 from datetime import datetime
@@ -103,8 +101,6 @@ def prep_data(data, strengths):
         columns={x: x.lower().replace('-', '_').replace(' ', '_') for x in shot_types.columns})
 
     df = df.copy().merge(shot_types, left_index=True, right_index=True, how="outer")
-
-    # df.score_diff = np.where(df.event == "GOAL", df.score_diff - 1, df.score_diff)
 
     conds = [df.score_diff > 4, df.score_diff < -4]
 
@@ -427,7 +423,7 @@ def prep_data(data, strengths):
     return df
 
 
-years = list(range(2022, 2009, -1))
+years = list(range(2023, 2009, -1))
 
 # List to collect the dataframes
 evens = []
@@ -457,7 +453,7 @@ for year in pbar:
 
     empty_against = prep_data(pbp, "empty_against")
 
-    if year != 2022:
+    if year != 2023:
         evens.append(even)
 
         powerplays.append(powerplay)
