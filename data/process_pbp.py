@@ -209,7 +209,7 @@ def prep_data(data, strengths):
         df = df.loc[conds]
 
         drop_cols = [
-            x for x in df.columns if "strength_state_" in x and x not in strengths_list
+            x for x in df.columns if "strength_state_" in x and x not in [f'strength_state_{x}' for x in strengths_list]
         ]
 
         df = df.drop(drop_cols, axis=1, errors="ignore")
