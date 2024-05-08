@@ -447,6 +447,7 @@ def objective(trial):
                 labels=[0, 1],
                 target_names=["no goal", "goal"],
                 output_dict=True,
+                zero_division=0
             )
 
             class_report = pd.DataFrame(class_report).to_html(
