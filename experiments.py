@@ -279,7 +279,7 @@ def load_data(model_name):
     df = pd.read_csv(filepath, index_col=0)
 
     X = df.drop(["goal", "season"], axis=1)
-    y = ["goal"].copy()
+    y = df["goal"].copy()
 
     seed = 615
 
