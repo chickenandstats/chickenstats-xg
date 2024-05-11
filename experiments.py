@@ -278,14 +278,12 @@ def load_data(model_name):
 
     df = pd.read_csv(filepath, index_col=0)
 
-    train = df.loc[df.season != 20212022].drop("season", axis=1)
-    test = df.loc[df.season == 20212022].drop("season", axis=1)
+    X = df.drop(["goal", "season"], axis=1)
+    y = ["goal"].copy()
 
-    X_train = train.drop("goal", axis=1)
-    y_train = train["goal"]
+    seed = 615
 
-    X_test = test.drop("goal", axis=1)
-    y_test = test["goal"]
+    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=seed, shuffle=True, stratify=y)
 
     scale_pos_weight = y_train.loc[y_train == 0].count() / y_train.loc[y_train == 1].count()
 
