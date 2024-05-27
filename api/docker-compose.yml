@@ -1,8 +1,8 @@
 
 services:
 
-    mlflow-db:
-        container_name: mlflow-db
+    api-db:
+        container_name: api-db
         image: postgres:14-alpine
         restart: always
         env_file:
