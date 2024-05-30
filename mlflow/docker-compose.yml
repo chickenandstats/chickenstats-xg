@@ -89,8 +89,8 @@ services:
           - POSTGRES_USER=${POSTGRES_USER}
           - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
           - APP_DB=${APP_DB}
-        volumes:
-          - ./tracking/basic-auth.ini:/mlflow/server/auth/basic_auth.ini:ro
+        #volumes:
+        #  - ./tracking/basic-auth.ini:/mlflow/server/auth/basic_auth.ini:ro
         ports:
           - 5000:5000
         networks:
@@ -101,9 +101,9 @@ services:
           --backend-store-uri postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@mlflow-db:5432/${APP_DB} \
           --default-artifact-root s3://mlflow/ \
           --host 0.0.0.0 \
-          --workers 12 \
-          --app-name basic-auth
+          --workers 12 
           "
+        #  --app-name basic-auth
 
     caddy:
       container_name: caddy
