@@ -154,3 +154,5 @@ cython_debug/
 *.DS_STORE
 *.csv
 *.ipynb
+mlflow/tracking/basic-auth.ini
+*.ini
