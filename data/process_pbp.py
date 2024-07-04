@@ -45,6 +45,14 @@ def prep_data(data, strengths):
 
     df = df.loc[conds]
 
+    df['event_f_num'] = df.teammates_positions.str.count(r'L|C|R')
+    df['event_d_num'] = df.teammates_positions.str.count(r'D')
+    df['forwards_perc'] = df.event_f_num / (df.event_f_num + df.event_d_num)
+
+    df['opp_f_num'] = df.opp_team_on_positions.str.count(r'L|C|R')
+    df['opp_d_num'] = df.opp_team_on_positions.str.count(r'D')
+    df['opp_forwards_perc'] = df.opp_f_num / (df.opp_f_num + df.opp_d_num)
+
     conds = np.logical_and.reduce(
         [
             df.season == df.season.shift(1),
@@ -307,41 +315,17 @@ def prep_data(data, strengths):
         "goal",
         "period",
         "period_seconds",
-        # "score_state",
         "score_diff",
         "danger",
         "high_danger",
-        # "coords_x",
-        # "coords_y",
-        "player_1_age",
-        "player_1_height",
-        "player_1_weight",
         "position_group",
-        # "shooter_good_hand",
-        "shot_distance_from_mean",
         "event_distance",
         "event_angle",
+        "forwards_percent",
+        "opp_forwards_percent",
         "is_rebound",
         "rush_attempt",
         "is_home",
-        "own_goalie_age",
-        "own_goalie_height",
-        "own_goalie_weight",
-        "forwards_ages_mean",
-        "forwards_height_mean",
-        "forwards_weight_mean",
-        "defense_ages_mean",
-        "defense_height_mean",
-        "defense_weight_mean",
-        "opp_goalie_age",
-        "opp_goalie_height",
-        "opp_goalie_weight",
-        "opp_forwards_ages_mean",
-        "opp_forwards_height_mean",
-        "opp_forwards_weight_mean",
-        "opp_defense_ages_mean",
-        "opp_defense_height_mean",
-        "opp_defense_weight_mean",
         "seconds_since_last",
         "event_type_last",
         "distance_from_last",
@@ -384,15 +368,6 @@ def prep_data(data, strengths):
         "strength_state_3vE",
         "strength_state_4vE",
         "strength_state_5vE",
-        "player_1_hand_L",
-        "player_1_hand_R",
-        # "player_1_position_C",
-        # "player_1_position_D",
-        # "player_1_position_G",
-        # "player_1_position_L",
-        # "player_1_position_R",
-        "opp_goalie_catches_L",
-        "opp_goalie_catches_R",
     ]
 
     cols = [x for x in cols if x in df.columns]
