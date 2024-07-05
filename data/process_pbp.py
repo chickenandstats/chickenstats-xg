@@ -47,11 +47,11 @@ def prep_data(data, strengths):
 
     df['event_f_num'] = df.teammates_positions.str.count(r'L|C|R')
     df['event_d_num'] = df.teammates_positions.str.count(r'D')
-    df['forwards_perc'] = df.event_f_num / (df.event_f_num + df.event_d_num)
+    df['forwards_percent'] = df.event_f_num / (df.event_f_num + df.event_d_num)
 
     df['opp_f_num'] = df.opp_team_on_positions.str.count(r'L|C|R')
     df['opp_d_num'] = df.opp_team_on_positions.str.count(r'D')
-    df['opp_forwards_perc'] = df.opp_f_num / (df.opp_f_num + df.opp_d_num)
+    df['opp_forwards_percent'] = df.opp_f_num / (df.opp_f_num + df.opp_d_num)
 
     conds = np.logical_and.reduce(
         [
