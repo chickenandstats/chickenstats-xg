@@ -45,13 +45,13 @@ def prep_data(data, strengths):
 
     df = df.loc[conds]
 
-    df['event_f_num'] = df.teammates_positions.str.count(r'L|C|R')
-    df['event_d_num'] = df.teammates_positions.str.count(r'D')
-    df['forwards_percent'] = df.event_f_num / (df.event_f_num + df.event_d_num)
+    df["event_f_num"] = df.teammates_positions.str.count(r"L|C|R")
+    df["event_d_num"] = df.teammates_positions.str.count(r"D")
+    df["forwards_percent"] = df.event_f_num / (df.event_f_num + df.event_d_num)
 
-    df['opp_f_num'] = df.opp_team_on_positions.str.count(r'L|C|R')
-    df['opp_d_num'] = df.opp_team_on_positions.str.count(r'D')
-    df['opp_forwards_percent'] = df.opp_f_num / (df.opp_f_num + df.opp_d_num)
+    df["opp_f_num"] = df.opp_team_on_positions.str.count(r"L|C|R")
+    df["opp_d_num"] = df.opp_team_on_positions.str.count(r"D")
+    df["opp_forwards_percent"] = df.opp_f_num / (df.opp_f_num + df.opp_d_num)
 
     conds = np.logical_and.reduce(
         [
@@ -73,8 +73,8 @@ def prep_data(data, strengths):
     df["same_team_last"] = np.where(np.equal(df.event_team, df.event_team_last), 1, 0)
 
     df["distance_from_last"] = (
-                                       (df.coords_x - df.coords_x_last) ** 2 + (df.coords_y - df.coords_y_last) ** 2
-                               ) ** (1 / 2)
+        (df.coords_x - df.coords_x_last) ** 2 + (df.coords_y - df.coords_y_last) ** 2
+    ) ** (1 / 2)
 
     last_is_shot = np.equal(df.event_type_last, "SHOT")
     last_is_miss = np.equal(df.event_type_last, "MISS")
@@ -103,10 +103,13 @@ def prep_data(data, strengths):
 
     df["prior_face"] = np.where(last_is_fac, 1, 0)
 
-    shot_types = (pd.get_dummies(df.shot_type, dtype=int))
+    shot_types = pd.get_dummies(df.shot_type, dtype=int)
 
     shot_types = shot_types.rename(
-        columns={x: x.lower().replace('-', '_').replace(' ', '_') for x in shot_types.columns})
+        columns={
+            x: x.lower().replace("-", "_").replace(" ", "_") for x in shot_types.columns
+        }
+    )
 
     df = df.copy().merge(shot_types, left_index=True, right_index=True, how="outer")
 
@@ -217,7 +220,10 @@ def prep_data(data, strengths):
         df = df.loc[conds]
 
         drop_cols = [
-            x for x in df.columns if "strength_state_" in x and x not in [f'strength_state_{x}' for x in strengths_list]
+            x
+            for x in df.columns
+            if "strength_state_" in x
+            and x not in [f"strength_state_{x}" for x in strengths_list]
         ]
 
         df = df.drop(drop_cols, axis=1, errors="ignore")
@@ -234,7 +240,10 @@ def prep_data(data, strengths):
         df = df.loc[conds]
 
         drop_cols = [
-            x for x in df.columns if "strength_state_" in x and x not in [f'strength_state_{x}' for x in strengths_list]
+            x
+            for x in df.columns
+            if "strength_state_" in x
+            and x not in [f"strength_state_{x}" for x in strengths_list]
         ]
 
         df = df.drop(drop_cols, axis=1, errors="ignore")
@@ -251,7 +260,10 @@ def prep_data(data, strengths):
         df = df.loc[conds]
 
         drop_cols = [
-            x for x in df.columns if "strength_state_" in x and x not in [f'strength_state_{x}' for x in strengths_list]
+            x
+            for x in df.columns
+            if "strength_state_" in x
+            and x not in [f"strength_state_{x}" for x in strengths_list]
         ]
 
         df = df.drop(drop_cols, axis=1, errors="ignore")
@@ -268,7 +280,10 @@ def prep_data(data, strengths):
         df = df.loc[conds]
 
         drop_cols = [
-            x for x in df.columns if "strength_state_" in x and x not in [f'strength_state_{x}' for x in strengths_list]
+            x
+            for x in df.columns
+            if "strength_state_" in x
+            and x not in [f"strength_state_{x}" for x in strengths_list]
         ]
 
         df = df.drop(drop_cols, axis=1, errors="ignore")
@@ -285,7 +300,10 @@ def prep_data(data, strengths):
         df = df.loc[conds]
 
         drop_cols = [
-            x for x in df.columns if "strength_state_" in x and x not in [f'strength_state_{x}' for x in strengths_list]
+            x
+            for x in df.columns
+            if "strength_state_" in x
+            and x not in [f"strength_state_{x}" for x in strengths_list]
         ]
 
         df = df.drop(drop_cols, axis=1, errors="ignore")
@@ -387,7 +405,7 @@ def prep_data(data, strengths):
     for col in df.columns:
         df[col] = pd.to_numeric(df[col])
 
-    conds = [df.goal == True, df.goal == False]
+    conds = [df.goal is True, df.goal is False]
 
     values = [1, 0]
 

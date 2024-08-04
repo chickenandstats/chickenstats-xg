@@ -16,14 +16,6 @@ import xgboost as xgb
 
 import sklearn
 from sklearn.model_selection import train_test_split, StratifiedKFold, cross_validate
-from sklearn.metrics import (
-    accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    roc_auc_score,
-    log_loss,
-)
 
 import mlflow
 import mlflow.xgboost
@@ -46,13 +38,13 @@ from yellowbrick.classifier import (
 )
 from yellowbrick.model_selection import FeatureImportances
 
-import shap
 
 import seaborn as sns
 
 import cronitor
 
 ## Functions
+
 
 def model_metrics(y, y_pred, y_pred_proba):
     """Returns various model metrics for a tuned model"""
@@ -79,15 +71,21 @@ def model_metrics(y, y_pred, y_pred_proba):
 
     f1 = sklearn.metrics.f1_score(y, y_pred, zero_division=0)
 
-    f1_weighted = sklearn.metrics.f1_score(y, y_pred, average="weighted", zero_division=0)
+    f1_weighted = sklearn.metrics.f1_score(
+        y, y_pred, average="weighted", zero_division=0
+    )
 
     precision = sklearn.metrics.precision_score(y, y_pred, zero_division=0)
 
-    precision_weighted = sklearn.metrics.precision_score(y, y_pred, average="weighted", zero_division=0)
+    precision_weighted = sklearn.metrics.precision_score(
+        y, y_pred, average="weighted", zero_division=0
+    )
 
     recall = sklearn.metrics.recall_score(y, y_pred, zero_division=0)
 
-    recall_weighted = sklearn.metrics.recall_score(y, y_pred, average="weighted", zero_division=0)
+    recall_weighted = sklearn.metrics.recall_score(
+        y, y_pred, average="weighted", zero_division=0
+    )
 
     roc_auc = sklearn.metrics.roc_auc_score(y, y_pred_proba)
 
@@ -283,12 +281,15 @@ def load_data(model_name):
 
     seed = 615
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=seed, shuffle=True, stratify=y)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, random_state=seed, shuffle=True, stratify=y
+    )
 
-    scale_pos_weight = y_train.loc[y_train == 0].count() / y_train.loc[y_train == 1].count()
+    scale_pos_weight = (
+        y_train.loc[y_train == 0].count() / y_train.loc[y_train == 1].count()
+    )
 
     if model_name == "empty_against":
-
         scale_pos_weight = 1
 
     return X_train, X_test, y_train, y_test, scale_pos_weight
@@ -445,7 +446,7 @@ def objective(trial):
                 labels=[0, 1],
                 target_names=["no goal", "goal"],
                 output_dict=True,
-                zero_division=0
+                zero_division=0,
             )
 
             class_report = pd.DataFrame(class_report).to_html(
@@ -500,7 +501,7 @@ def tune_model(model_name, version, storage, max_trials, run=None):
         "level": "parent",
     }
 
-    if run == None:
+    if run is None:
         with mlflow.start_run(tags=tags) as parent_run:
             parent_info = parent_run.info
 
@@ -608,7 +609,9 @@ if __name__ == "__main__":
 
     postgres_url = f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}/{db_name}"
 
-    storage = optuna.storages.RDBStorage(url=postgres_url, skip_compatibility_check=True)
+    storage = optuna.storages.RDBStorage(
+        url=postgres_url, skip_compatibility_check=True
+    )
 
     if args.delete:
         study_name = f"{model_name}-{version}"
