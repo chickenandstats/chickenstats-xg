@@ -1,6 +1,6 @@
-### Script for running mlflow experiments and logging them to mlflow on GCP ###
+# Script for running mlflow experiments and logging them to mlflow on GCP #
 
-## Import dependencies
+# Import dependencies
 
 import argparse
 
@@ -43,7 +43,7 @@ import seaborn as sns
 
 import cronitor
 
-## Functions
+# Functions
 
 
 def model_metrics(y, y_pred, y_pred_proba):
@@ -118,7 +118,7 @@ def model_viz(model, X_train, y_train, X_test, y_test):
 
     encoder = {0: "no goal", 1: "goal"}
 
-    ## Classification report
+    # Classification report
 
     fig, ax = plt.subplots(dpi=dpi, figsize=figsize)
 
@@ -132,7 +132,7 @@ def model_viz(model, X_train, y_train, X_test, y_test):
 
     classification_report = fig
 
-    ## ROC-AUC
+    # ROC-AUC
 
     fig, ax = plt.subplots(dpi=dpi, figsize=figsize)
 
@@ -146,7 +146,7 @@ def model_viz(model, X_train, y_train, X_test, y_test):
 
     roc_auc = fig
 
-    ## Class Prediction Errors
+    # Class Prediction Errors
 
     fig, ax = plt.subplots(dpi=dpi, figsize=figsize)
 
@@ -160,7 +160,7 @@ def model_viz(model, X_train, y_train, X_test, y_test):
 
     class_prediction = fig
 
-    ## Precision Recall Curve
+    # Precision Recall Curve
 
     fig, ax = plt.subplots(dpi=dpi, figsize=figsize)
 
@@ -174,7 +174,7 @@ def model_viz(model, X_train, y_train, X_test, y_test):
 
     precision_recall = fig
 
-    ## Feature Importance
+    # Feature Importance
 
     fig, ax = plt.subplots(dpi=dpi, figsize=figsize)
 
@@ -193,7 +193,7 @@ def model_viz(model, X_train, y_train, X_test, y_test):
 
     importance = fig
 
-    ## Relative Feature Importance
+    # Relative Feature Importance
 
     fig, ax = plt.subplots(dpi=dpi, figsize=figsize)
 
@@ -479,7 +479,7 @@ def objective(trial):
 
 
 def tune_model(model_name, version, storage, max_trials, run=None):
-    """Wraps all of the over tuning functions into one"""
+    """Wraps all of the tuning functions into one"""
 
     global X_train, X_test, y_train, y_test, scale_pos_weight
 
@@ -561,16 +561,16 @@ if __name__ == "__main__":
             "Strength name is not supported, try 'even_strength', 'powerplay', 'shorthanded', 'empty_for', or 'empty_against'"
         )
 
-    ## Setting seaborn style for graphs
+    # Setting seaborn style for graphs
 
     sns.set_style("white")
 
-    ## Ignoring warnings
+    # Ignoring warnings
 
     warnings.filterwarnings("ignore")
     warnings.filterwarnings(action="ignore", module="mlflow.models.model")
 
-    ## Setting environment variables
+    # Setting environment variables
 
     load_dotenv()
 
