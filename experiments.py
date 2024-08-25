@@ -278,7 +278,7 @@ def load_data(model_name):
     df = pd.read_csv(filepath, index_col=0).drop("season", axis=1)
 
     pd_dataset = mlflow.data.from_pandas(
-        df, name=model_name, targets="goal"
+        df, name=study_name, targets="goal"
     )
 
     X = df.drop("goal", axis=1)
