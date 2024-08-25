@@ -277,9 +277,7 @@ def load_data(model_name, study_name):
 
     df = pd.read_csv(filepath, index_col=0).drop("season", axis=1)
 
-    pd_dataset = mlflow.data.from_pandas(
-        df, name=study_name, targets="goal"
-    )
+    pd_dataset = mlflow.data.from_pandas(df, name=study_name, targets="goal")
 
     X = df.drop("goal", axis=1)
     y = df["goal"].copy()
@@ -305,7 +303,6 @@ def objective(trial):
 
     with mlflow.start_run(run_id=parent_info.run_id):
         with mlflow.start_run(nested=True) as current_run:
-
             mlflow.log_input(pd_dataset, context="training")
 
             params = {
@@ -507,7 +504,9 @@ def tune_model(model_name, version, storage, max_trials, run=None):
 
     global X_train, X_test, y_train, y_test, scale_pos_weight, pd_dataset
 
-    X_train, X_test, y_train, y_test, scale_pos_weight, pd_dataset = load_data(model_name, study_name)
+    X_train, X_test, y_train, y_test, scale_pos_weight, pd_dataset = load_data(
+        model_name, study_name
+    )
 
     if run is None:
         with mlflow.start_run(tags=tags) as parent_run:
