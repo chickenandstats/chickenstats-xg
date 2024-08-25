@@ -20,6 +20,7 @@ from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val
 import mlflow
 import mlflow.xgboost
 from mlflow.models.signature import infer_signature
+from mlflow.data.pandas_dataset import PandasDataset
 
 import optuna
 
@@ -274,9 +275,13 @@ def load_data(model_name):
 
     filepath = SAVE_FOLDER / f"{model_name}.csv"
 
-    df = pd.read_csv(filepath, index_col=0)
+    df = pd.read_csv(filepath, index_col=0).drop("season", axis=1)
 
-    X = df.drop(["goal", "season"], axis=1)
+    pd_dataset = mlflow.data.from_pandas(
+        df, name=model_name, targets="goal"
+    )
+
+    X = df.drop("goal", axis=1)
     y = df["goal"].copy()
 
     seed = 615
@@ -292,7 +297,7 @@ def load_data(model_name):
     if model_name == "empty_against":
         scale_pos_weight = 1
 
-    return X_train, X_test, y_train, y_test, scale_pos_weight
+    return X_train, X_test, y_train, y_test, scale_pos_weight, pd_dataset
 
 
 def objective(trial):
@@ -300,6 +305,9 @@ def objective(trial):
 
     with mlflow.start_run(run_id=parent_info.run_id):
         with mlflow.start_run(nested=True) as current_run:
+
+            mlflow.log_input(pd_dataset, context="training")
+
             params = {
                 "objective": "binary:logistic",
                 #'eval_metric': ['auc', 'log_loss'],
@@ -481,9 +489,9 @@ def objective(trial):
 def tune_model(model_name, version, storage, max_trials, run=None):
     """Wraps all of the tuning functions into one"""
 
-    global X_train, X_test, y_train, y_test, scale_pos_weight
+    global X_train, X_test, y_train, y_test, scale_pos_weight, pd_dataset
 
-    X_train, X_test, y_train, y_test, scale_pos_weight = load_data(model_name)
+    X_train, X_test, y_train, y_test, scale_pos_weight, pd_dataset = load_data(model_name)
 
     global study_name, experiment_id
 
