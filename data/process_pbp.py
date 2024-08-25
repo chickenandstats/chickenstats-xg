@@ -1,4 +1,4 @@
-## Process data for ML experiments
+# Process data for ML experiments
 
 import pandas as pd
 
@@ -44,14 +44,6 @@ def prep_data(data, strengths):
     )
 
     df = df.loc[conds]
-
-    df["event_f_num"] = df.teammates_positions.str.count(r"L|C|R")
-    df["event_d_num"] = df.teammates_positions.str.count(r"D")
-    df["forwards_percent"] = df.event_f_num / (df.event_f_num + df.event_d_num)
-
-    df["opp_f_num"] = df.opp_team_on_positions.str.count(r"L|C|R")
-    df["opp_d_num"] = df.opp_team_on_positions.str.count(r"D")
-    df["opp_forwards_percent"] = df.opp_f_num / (df.opp_f_num + df.opp_d_num)
 
     conds = np.logical_and.reduce(
         [
@@ -340,7 +332,9 @@ def prep_data(data, strengths):
         "event_distance",
         "event_angle",
         "forwards_percent",
+        "forwards_count",
         "opp_forwards_percent",
+        "opp_forwards_count",
         "is_rebound",
         "rush_attempt",
         "is_home",
