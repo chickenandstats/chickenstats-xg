@@ -269,7 +269,7 @@ def log_viz(
     confusion_matrix.clear()
 
 
-def load_data(model_name):
+def load_data(model_name, study_name):
     # Folder for saving the files
     SAVE_FOLDER = Path("./data/processed/")
 
@@ -489,10 +489,6 @@ def objective(trial):
 def tune_model(model_name, version, storage, max_trials, run=None):
     """Wraps all of the tuning functions into one"""
 
-    global X_train, X_test, y_train, y_test, scale_pos_weight, pd_dataset
-
-    X_train, X_test, y_train, y_test, scale_pos_weight, pd_dataset = load_data(model_name)
-
     global study_name, experiment_id
 
     study_name = f"{model_name}-{version}"
@@ -508,6 +504,10 @@ def tune_model(model_name, version, storage, max_trials, run=None):
         "experiment_id": experiment_id,
         "level": "parent",
     }
+
+    global X_train, X_test, y_train, y_test, scale_pos_weight, pd_dataset
+
+    X_train, X_test, y_train, y_test, scale_pos_weight, pd_dataset = load_data(model_name, study_name)
 
     if run is None:
         with mlflow.start_run(tags=tags) as parent_run:
