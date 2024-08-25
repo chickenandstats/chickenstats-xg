@@ -10,6 +10,8 @@ from tqdm.auto import tqdm
 
 from datetime import datetime
 
+from chickenstats.chicken_nhl.validation import XGSchema
+
 
 def prep_data(data, strengths):
     """
@@ -65,8 +67,8 @@ def prep_data(data, strengths):
     df["same_team_last"] = np.where(np.equal(df.event_team, df.event_team_last), 1, 0)
 
     df["distance_from_last"] = (
-        (df.coords_x - df.coords_x_last) ** 2 + (df.coords_y - df.coords_y_last) ** 2
-    ) ** (1 / 2)
+                                       (df.coords_x - df.coords_x_last) ** 2 + (df.coords_y - df.coords_y_last) ** 2
+                               ) ** (1 / 2)
 
     last_is_shot = np.equal(df.event_type_last, "SHOT")
     last_is_miss = np.equal(df.event_type_last, "MISS")
@@ -120,6 +122,14 @@ def prep_data(data, strengths):
     values = ["F", "D", "G"]
 
     df["position_group"] = np.select(conds, values)
+
+    position_dummies = pd.get_dummies(df.position_group, dtype=int)
+
+    new_cols = {x: f"position_{x.lower()}" for x in values}
+
+    position_dummies = position_dummies.rename(columns=new_cols)
+
+    df = df.merge(position_dummies, left_index=True, right_index=True)
 
     conds = [
         np.logical_and.reduce(
@@ -215,7 +225,7 @@ def prep_data(data, strengths):
             x
             for x in df.columns
             if "strength_state_" in x
-            and x not in [f"strength_state_{x}" for x in strengths_list]
+               and x not in [f"strength_state_{x}" for x in strengths_list]
         ]
 
         df = df.drop(drop_cols, axis=1, errors="ignore")
@@ -235,7 +245,7 @@ def prep_data(data, strengths):
             x
             for x in df.columns
             if "strength_state_" in x
-            and x not in [f"strength_state_{x}" for x in strengths_list]
+               and x not in [f"strength_state_{x}" for x in strengths_list]
         ]
 
         df = df.drop(drop_cols, axis=1, errors="ignore")
@@ -255,7 +265,7 @@ def prep_data(data, strengths):
             x
             for x in df.columns
             if "strength_state_" in x
-            and x not in [f"strength_state_{x}" for x in strengths_list]
+               and x not in [f"strength_state_{x}" for x in strengths_list]
         ]
 
         df = df.drop(drop_cols, axis=1, errors="ignore")
@@ -275,8 +285,8 @@ def prep_data(data, strengths):
             x
             for x in df.columns
             if "strength_state_" in x
-            and x not in [f"strength_state_{x}" for x in strengths_list]
-        ]
+               and x not in [f"strength_state_{x}" for x in strengths_list]
+        ]  # + [x for x in df.columns if "own_goalie" in x]
 
         df = df.drop(drop_cols, axis=1, errors="ignore")
 
@@ -295,30 +305,30 @@ def prep_data(data, strengths):
             x
             for x in df.columns
             if "strength_state_" in x
-            and x not in [f"strength_state_{x}" for x in strengths_list]
-        ]
+               and x not in [f"strength_state_{x}" for x in strengths_list]
+        ]  # + [x for x in df.columns if "opp_goalie" in x]
 
         df = df.drop(drop_cols, axis=1, errors="ignore")
 
     df = df.drop(cat_cols, axis=1, errors="ignore")
 
-    cols = [
-        "backhand",
-        "bat",
-        "between_legs",
-        "cradle",
-        "deflected",
-        "poke",
-        "slap",
-        "snap",
-        "tip_in",
-        "wrap_around",
-        "wrist",
-    ]
-
-    for col in cols:
-        if col not in df.columns:
-            df[col] = 0
+    # cols = [
+    #     "backhand",
+    #     "bat",
+    #     "between_legs",
+    #     "cradle",
+    #     "deflected",
+    #     "poke",
+    #     "slap",
+    #     "snap",
+    #     "tip_in",
+    #     "wrap_around",
+    #     "wrist",
+    # ]
+    #
+    # for col in cols:
+    #     if col not in df.columns:
+    #         df[col] = 0
 
     cols = [
         "season",
@@ -328,7 +338,9 @@ def prep_data(data, strengths):
         "score_diff",
         "danger",
         "high_danger",
-        "position_group",
+        "position_f",
+        "position_d",
+        "position_g",
         "event_distance",
         "event_angle",
         "forwards_percent",
@@ -384,28 +396,30 @@ def prep_data(data, strengths):
 
     cols = [x for x in cols if x in df.columns]
 
-    df = df[cols].copy()
+    # df = df[cols].copy()
 
-    if strengths.lower() == "empty_for":
-        drop_cols = [x for x in df.columns if "own_goalie" in x]
+    df = XGSchema.validate([x for x in XGSchema.dtypes.keys() if x in df.columns])
 
-        df = df.drop(drop_cols, axis=1)
+    # if strengths.lower() == "empty_for":
+    #     drop_cols = [x for x in df.columns if "own_goalie" in x]
+    #
+    #     df = df.drop(drop_cols, axis=1)
+    #
+    # if strengths.lower() == "empty_against":
+    #     drop_cols = [x for x in df.columns if "opp_goalie" in x]
+    #
+    #     df = df.drop(drop_cols, axis=1)
 
-    if strengths.lower() == "empty_against":
-        drop_cols = [x for x in df.columns if "opp_goalie" in x]
-
-        df = df.drop(drop_cols, axis=1)
-
-    for col in df.columns:
-        df[col] = pd.to_numeric(df[col])
-
-    conds = [df.goal is True, df.goal is False]
-
-    values = [1, 0]
-
-    df.goal = np.select(conds, values, df.goal)
-
-    df = df.fillna(0)
+    # for col in df.columns:
+    #     df[col] = pd.to_numeric(df[col])
+    #
+    # conds = [df.goal is True, df.goal is False]
+    #
+    # values = [1, 0]
+    #
+    # df.goal = np.select(conds, values, df.goal)
+    #
+    # df = df.fillna(0)
 
     return df
 
