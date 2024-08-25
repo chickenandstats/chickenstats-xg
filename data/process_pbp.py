@@ -398,7 +398,7 @@ def prep_data(data, strengths):
 
     # df = df[cols].copy()
 
-    df = XGSchema.validate([x for x in XGSchema.dtypes.keys() if x in df.columns])
+    df = XGSchema.validate(df[[x for x in XGSchema.dtypes.keys() if x in df.columns]])
 
     # if strengths.lower() == "empty_for":
     #     drop_cols = [x for x in df.columns if "own_goalie" in x]
