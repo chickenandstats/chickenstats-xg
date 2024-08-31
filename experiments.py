@@ -293,7 +293,7 @@ def load_data(model_name, study_name):
     )
 
     if model_name == "empty_against":
-        scale_pos_weight = 1
+        scale_pos_weight = 1.0
 
     return X_train, X_test, y_train, y_test, scale_pos_weight, pd_dataset
 
