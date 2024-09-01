@@ -20,7 +20,6 @@ from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val
 import mlflow
 import mlflow.xgboost
 from mlflow.models.signature import infer_signature
-from mlflow.data.pandas_dataset import PandasDataset
 
 import optuna
 
