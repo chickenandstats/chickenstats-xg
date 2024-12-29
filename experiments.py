@@ -611,9 +611,10 @@ if __name__ == "__main__":
     db_user = os.environ["DB_USER"]
     db_password = os.environ["DB_PASSWORD"]
     db_name = os.environ["DB_NAME"]
+    db_port = os.environ["DB_PORT"]
     mlflow_tracking_uri = mlflow.get_tracking_uri()
 
-    postgres_url = f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}/{db_name}"
+    postgres_url = f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
 
     storage = optuna.storages.RDBStorage(
         url=postgres_url, skip_compatibility_check=True

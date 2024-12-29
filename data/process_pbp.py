@@ -40,6 +40,7 @@ def prep_data(data, strengths):
         [
             df.event.isin(events),
             df.strength_state != "1v0",
+            df.strength_state != "EvE",
             pd.notnull(df.coords_x),
             pd.notnull(df.coords_y),
         ]
@@ -114,14 +115,14 @@ def prep_data(data, strengths):
     df.score_diff = np.select(conds, values, df.score_diff)
 
     conds = [
-        df.player_1_position.isin(["F", "L", "R", "C"]),
-        df.player_1_position == "D",
-        df.player_1_position == "G",
+        df.player_1_position.astype(str).isin(["F", "L", "R", "C"]),
+        df.player_1_position.astype(str) == "D",
+        df.player_1_position.astype(str) == "G",
     ]
 
     values = ["F", "D", "G"]
 
-    df["position_group"] = np.select(conds, values)
+    df["position_group"] = np.select(conds, values, default=None)
 
     position_dummies = pd.get_dummies(df.position_group, dtype=int)
 
