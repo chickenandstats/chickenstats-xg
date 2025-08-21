@@ -22,7 +22,7 @@ monitor.ping(
 )
 
 # Generating a list of years to scrape
-years = list(range(2023, 2009, -1))
+years = list(range(2024, 2009, -1))
 
 # Folder for saving the files
 SAVE_FOLDER = Path("./raw")
