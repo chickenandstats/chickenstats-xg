@@ -46,7 +46,7 @@ def prep_data(data, strengths):
         ]
     )
 
-    df = df.loc[conds]
+    df = df.loc[conds].copy()
 
     conds = np.logical_and.reduce(
         [
@@ -220,7 +220,7 @@ def prep_data(data, strengths):
             ]
         )
 
-        df = df.loc[conds]
+        df = df.loc[conds].copy()
 
         drop_cols = [
             x
@@ -240,7 +240,7 @@ def prep_data(data, strengths):
             ]
         )
 
-        df = df.loc[conds]
+        df = df.loc[conds].copy()
 
         drop_cols = [
             x
@@ -260,7 +260,7 @@ def prep_data(data, strengths):
             ]
         )
 
-        df = df.loc[conds]
+        df = df.loc[conds].copy()
 
         drop_cols = [
             x
@@ -280,7 +280,7 @@ def prep_data(data, strengths):
             ]
         )
 
-        df = df.loc[conds]
+        df = df.loc[conds].copy()
 
         drop_cols = [
             x
@@ -300,7 +300,7 @@ def prep_data(data, strengths):
             ]
         )
 
-        df = df.loc[conds]
+        df = df.loc[conds].copy()
 
         drop_cols = [
             x
@@ -425,7 +425,7 @@ def prep_data(data, strengths):
     return df
 
 
-years = list(range(2023, 2009, -1))
+years = list(range(2024, 2009, -1))
 
 # List to collect the dataframes
 evens = []
@@ -455,7 +455,7 @@ for year in pbar:
 
     empty_against = prep_data(pbp, "empty_against")
 
-    if year != 2023:
+    if year != 2024:
         evens.append(even)
 
         powerplays.append(powerplay)
