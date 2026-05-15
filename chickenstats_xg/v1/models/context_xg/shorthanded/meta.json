@@ -1,0 +1,11 @@
+{
+  "strength": "shorthanded",
+  "tier": "context_xg",
+  "version": "1.0.0",
+  "optuna_study_name": "shorthanded-1.0.0-context",
+  "optuna_trial_number": 330,
+  "optuna_trial_value": 0.290523,
+  "mlflow_tuning_run_id": "d8d13c6800c74c6da741c92cfa690c81",
+  "git_commit": "df88baf",
+  "finalized_at": "2026-05-15T05:14:18.703800+00:00"
+}

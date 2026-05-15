@@ -1,0 +1,11 @@
+{
+  "strength": "empty_against",
+  "tier": "base_xg",
+  "version": "1.0.0",
+  "optuna_study_name": "empty_against-1.0.0-base",
+  "optuna_trial_number": 1160,
+  "optuna_trial_value": 0.789473,
+  "mlflow_tuning_run_id": "51acff56d34346f291fa730f77f31be0",
+  "git_commit": "df88baf",
+  "finalized_at": "2026-05-15T03:45:14.416591+00:00"
+}

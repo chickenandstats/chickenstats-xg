@@ -1,0 +1,11 @@
+{
+  "strength": "powerplay",
+  "tier": "context_xg",
+  "version": "1.0.0",
+  "optuna_study_name": "powerplay-1.0.0-context",
+  "optuna_trial_number": 54,
+  "optuna_trial_value": 0.232467,
+  "mlflow_tuning_run_id": "837e6b0dd711475aafc2df8e9f1e2e69",
+  "git_commit": "df88baf",
+  "finalized_at": "2026-05-15T05:12:08.756195+00:00"
+}
