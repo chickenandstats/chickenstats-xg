@@ -6,9 +6,9 @@ from rich.progress import TaskID
 
 import polars as pl
 
-from chickenstats_xg.v1.xg_utils import prep_data
+from chickenstats_xg.v1.utils.shot_features import prep_data
 from chickenstats.utilities import ChickenProgress
-from chickenstats_xg.v1.config import HOLD_OUT_SEASON
+from chickenstats_xg.v1.utils.data_splitting import write_train_holdout_split
 
 HOLD_OUT_YEAR = 2024  # raw files are named by season start-year (pbp_2024.parquet = 2024-25)
 
@@ -114,15 +114,14 @@ def main():
         name: pl.concat(year_dfs, how="diagonal") for name, year_dfs in accumulators.items()
     }
 
-    hold_out_dir: Path = Path(__file__).parent.parent / "data" / "base_xg" / "hold_out"
-    train_dir: Path = Path(__file__).parent.parent / "data" / "base_xg" / "train"
-    hold_out_dir.mkdir(parents=True, exist_ok=True)
-    train_dir.mkdir(parents=True, exist_ok=True)
-
+    data_dir = Path(__file__).parent.parent / "data" / "base_xg"
     for name, df in dfs.items():
-        df = df.sort(["season", "game_id", "period", "period_seconds"])
-        df.filter(pl.col("season") == HOLD_OUT_SEASON).write_parquet(hold_out_dir / f"{name}.parquet")
-        df.filter(pl.col("season") != HOLD_OUT_SEASON).write_parquet(train_dir / f"{name}.parquet")
+        write_train_holdout_split(
+            df.sort(["season", "game_id", "period", "period_seconds"]),
+            data_dir / "train",
+            data_dir / "hold_out",
+            name,
+        )
 
 
 if __name__ == "__main__":

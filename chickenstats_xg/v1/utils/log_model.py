@@ -33,11 +33,8 @@ from chickenstats_xg.v1.config import (
     PASSTHROUGH_COLS,
     STRENGTHS,
 )
-from chickenstats_xg.v1.experiments import (
-    _apply_fixed_categoricals,
-    _logit,
-    load_model_artifacts,
-)
+from chickenstats_xg.v1.utils.artifacts import load_model_artifacts
+from chickenstats_xg.v1.utils.transforms import apply_fixed_categoricals, logit
 
 TIERS = ["base_xg", "context_xg", "pred_goal"]
 
@@ -70,19 +67,19 @@ def _build_signature(
     try:
         if tier == "base_xg":
             feat_cols = [c for c in BASE_XG_FEATURE_COLUMNS if c in df.columns]
-            X = _apply_fixed_categoricals(df[feat_cols], strength)
+            X = apply_fixed_categoricals(df[feat_cols], strength)
             y_prob = model.predict_proba(X)[:, 1]
 
         elif tier == "context_xg":
             feat_cols = [c for c in CONTEXT_XG_FEATURE_COLUMNS if c in df.columns]
-            X = _apply_fixed_categoricals(df[feat_cols], strength)
+            X = apply_fixed_categoricals(df[feat_cols], strength)
             bm = df["logit_base_xg"].to_numpy() if "logit_base_xg" in df.columns else None
             y_prob = model.predict_proba(X, base_margin=bm)[:, 1]
 
         elif tier == "pred_goal":
             drop = [c for c in _PRED_GOAL_DROP if c in df.columns]
-            X = _apply_fixed_categoricals(df.drop(columns=drop), strength)
-            bm = _logit(df["base_xg"].to_numpy()) if "base_xg" in df.columns else None
+            X = apply_fixed_categoricals(df.drop(columns=drop), strength)
+            bm = logit(df["base_xg"].to_numpy()) if "base_xg" in df.columns else None
             y_prob = model.predict_proba(X, base_margin=bm)[:, 1]
             if calibrator is not None:
                 y_prob = calibrator.predict_proba(y_prob.reshape(-1, 1))[:, 1]
@@ -174,7 +171,7 @@ def main() -> None:
     load_dotenv()
     mlflow.enable_system_metrics_logging()
 
-    base_dir = Path(__file__).parent
+    base_dir = Path(__file__).parent.parent
 
     if args.all:
         targets = [(tier, strength) for tier in TIERS for strength in STRENGTHS]

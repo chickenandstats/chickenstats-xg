@@ -29,7 +29,7 @@ from chickenstats.utilities import ChickenProgress
 from rich.progress import TaskID
 
 from chickenstats_xg.v1.config import PASSTHROUGH_COLS, STRENGTHS
-from chickenstats_xg.v1.experiments import _apply_fixed_categoricals, _logit
+from chickenstats_xg.v1.utils.transforms import apply_fixed_categoricals, logit
 
 NON_FEATURE_COLS = ["goal", "season"] + PASSTHROUGH_COLS
 
@@ -42,11 +42,11 @@ def _split_df(df: pd.DataFrame, strength: str) -> tuple[pd.DataFrame, pd.Series,
     y = df["goal"].copy()
     bm: np.ndarray | None = None
     if "base_xg" in df.columns:
-        bm = _logit(df["base_xg"].to_numpy())
+        bm = logit(df["base_xg"].to_numpy())
     drop = [c for c in NON_FEATURE_COLS if c in df.columns]
     if "base_xg" in df.columns and "base_xg" not in drop:
         drop = drop + ["base_xg"]
-    X = _apply_fixed_categoricals(df.drop(columns=drop), strength)
+    X = apply_fixed_categoricals(df.drop(columns=drop), strength)
     return X, y, bm
 
 

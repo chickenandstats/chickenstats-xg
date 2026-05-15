@@ -30,8 +30,11 @@ from chickenstats.utilities import ChickenProgress
 from rich.progress import TaskID
 
 from chickenstats_xg.v1.config import BASE_XG_FEATURE_COLUMNS, PASSTHROUGH_COLS, STRENGTHS
-from chickenstats_xg.v1.experiments import _apply_fixed_categoricals, load_model_artifacts
-from chickenstats_xg.v1.xg_utils import prep_data
+from chickenstats_xg.v1.utils.artifacts import load_model_artifacts
+from chickenstats_xg.v1.utils.transforms import apply_fixed_categoricals
+from chickenstats_xg.v1.utils.rapm import prep_rapm
+from chickenstats_xg.v1.utils.scoring import apply_oof_predictions
+from chickenstats_xg.v1.utils.shot_features import prep_data
 
 _StrengthArg = Literal["even", "powerplay", "shorthanded", "empty_for", "empty_against"]
 
@@ -59,7 +62,7 @@ NON_FEATURE_COLS = ["goal", "season"] + PASSTHROUGH_COLS
 def _feature_matrix(df: pd.DataFrame, strength: str) -> pd.DataFrame:
     """Select BASE_XG_FEATURE_COLUMNS and apply fixed categorical encoding."""
     feat_cols = [c for c in BASE_XG_FEATURE_COLUMNS if c in df.columns]
-    return _apply_fixed_categoricals(df[feat_cols], strength)
+    return apply_fixed_categoricals(df[feat_cols], strength)
 
 
 def score_strength(
@@ -124,72 +127,12 @@ def score_strength(
     )
 
     # Override training-era shots with calibrated OOF predictions from finalize.py
-    oof_path = models_dir / strength / "oof.parquet"
-    if oof_path.exists():
-        oof_df = pd.read_parquet(oof_path).dropna(subset=["base_xg"])
-        oof_map = oof_df.set_index(["game_id", "event_idx"])["base_xg"]
-        idx = df.set_index(["game_id", "event_idx"]).index
-        in_oof = idx.isin(oof_map.index)
-        df.loc[in_oof, "base_xg"] = oof_map.reindex(idx[in_oof]).values
-        print(f"  [{strength}] {in_oof.sum():,} training shots replaced with calibrated OOF predictions.")
+    df = apply_oof_predictions(df, models_dir, strength, "base_xg")
 
     scored_dir.mkdir(parents=True, exist_ok=True)
     df.to_parquet(scored_dir / f"{strength}.parquet", index=False)
     print(f"  [{strength}] {len(df):,} shots scored → {scored_dir / f'{strength}.parquet'}")
 
-
-def _load_scored_xg(scored_dir: Path) -> pl.DataFrame:
-    """Combine all five strength-state scored parquets into a (game_id, event_idx) → base_xg map."""
-    frames = [
-        pl.scan_parquet(scored_dir / f"{s}.parquet").select(["game_id", "event_idx", "base_xg"])
-        for s in STRENGTHS
-        if (scored_dir / f"{s}.parquet").exists()
-    ]
-    return (
-        pl.concat(frames)
-        .group_by(["game_id", "event_idx"])
-        .agg(pl.col("base_xg").sum())
-        .collect()
-    )
-
-
-def _enrich_rapm_year(year_file: Path, scored_xg: pl.DataFrame, out_dir: Path) -> None:
-    """Join base_xg onto a single per-year raw PBP file and write the RAPM input parquet."""
-    df = pl.read_parquet(year_file)
-    if "base_xg" in df.columns:
-        df = df.drop("base_xg")
-    df = (
-        df
-        .join(scored_xg, on=["game_id", "event_idx"], how="left")
-        .with_columns(pl.col("base_xg").fill_null(0.0))
-    )
-    out_dir.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(out_dir / year_file.name)
-
-
-def prep_rapm(raw_dir: Path, scored_dir: Path, years: list[int] | None) -> None:
-    """Build RAPM input parquets from scored base_xg — equivalent to rapm/prep_pbp.py."""
-    rapm_dir = scored_dir.parent.parent / "rapm" / "pbp"
-
-    pbp_files = sorted(raw_dir.glob("pbp_*.parquet"))
-    if years:
-        pbp_files = [p for p in pbp_files if int(p.stem.split("_")[1]) in years]
-    if not pbp_files:
-        print("  [rapm] No raw PBP files found — skipping RAPM prep.")
-        return
-
-    print("  [rapm] Loading scored base_xg for RAPM enrichment...")
-    scored_xg = _load_scored_xg(scored_dir)
-    print(f"  [rapm] {len(scored_xg):,} scored fenwick events loaded.")
-
-    with ChickenProgress(speed_estimate_period=300, transient=True) as progress:
-        task: TaskID = progress.add_task("Enriching RAPM PBP...", total=len(pbp_files))
-        for pbp_file in pbp_files:
-            progress.update(task, description=f"Enriching {pbp_file.stem}...", refresh=True)
-            _enrich_rapm_year(pbp_file, scored_xg, rapm_dir)
-            progress.update(task, advance=1, refresh=True)
-
-    print(f"  [rapm] {len(pbp_files)} file(s) written to {rapm_dir}")
 
 
 def main() -> None:
@@ -220,7 +163,7 @@ def main() -> None:
         score_strength(strength, strength_arg, raw_dir, models_dir, scored_dir, args.years)
 
     if args.all and not args.no_rapm:
-        prep_rapm(raw_dir, scored_dir, args.years)
+        prep_rapm(raw_dir, scored_dir, "base_xg", args.years)
 
     print("Done.")
 

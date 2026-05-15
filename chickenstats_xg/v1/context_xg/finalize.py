@@ -21,7 +21,6 @@ import argparse
 import warnings
 from pathlib import Path
 
-import joblib
 import mlflow
 import mlflow.xgboost
 import numpy as np
@@ -46,17 +45,22 @@ from chickenstats_xg.v1.config import (
     compute_performance_tag,
 )
 from chickenstats_xg.v1.experiments import (
-    _apply_fixed_categoricals,
     _build_context_interaction_constraints,
-    compute_oof_predictions,
     load_optuna_storage,
     log_viz,
     model_metrics,
     model_viz,
+)
+from chickenstats_xg.v1.utils.artifacts import (
+    save_model_artifacts,
     save_model_metadata,
+)
+from chickenstats_xg.v1.utils.finalize_utils import (
+    compute_oof_predictions,
     screen_trials,
     select_top_trials,
 )
+from chickenstats_xg.v1.utils.transforms import apply_fixed_categoricals
 
 NON_FEATURE_COLS = ["goal", "season", "base_xg"] + PASSTHROUGH_COLS
 
@@ -66,7 +70,7 @@ def _split_df(df: pd.DataFrame, strength: str) -> tuple[pd.DataFrame, pd.Series,
     y = df["goal"].copy()
     feat_cols = [c for c in CONTEXT_XG_FEATURE_COLUMNS if c in df.columns]
     X = df[feat_cols].copy()
-    X = _apply_fixed_categoricals(X, strength)
+    X = apply_fixed_categoricals(X, strength)
     bm = df["logit_base_xg"].to_numpy() if "logit_base_xg" in df.columns else None
     return X, y, bm
 
@@ -174,17 +178,7 @@ def _finalize_one(
 
     models_dir = Path(__file__).parent.parent / "models" / "context_xg"
     strength_dir = models_dir / strength
-    strength_dir.mkdir(parents=True, exist_ok=True)
-    model.get_booster().save_model(str(strength_dir / "model.ubj"))
-    joblib.dump(calibrator, strength_dir / "calibrator.joblib")
-
-    oof_df = train_df[["game_id", "event_idx"]].reset_index(drop=True).copy()
-    oof_df["context_xg"] = np.where(
-        oof_mask,
-        calibrator.predict_proba(oof_prob.reshape(-1, 1))[:, 1],
-        np.nan,
-    )
-    oof_df.to_parquet(strength_dir / "oof.parquet", index=False)
+    save_model_artifacts(model, calibrator, strength_dir, train_df, oof_prob, oof_mask, "context_xg", params=params)
     print(f"  [{strength}] saved → {strength_dir}/model.ubj + calibrator.joblib + oof.parquet + scored parquet")
 
     save_model_metadata(

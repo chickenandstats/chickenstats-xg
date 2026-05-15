@@ -20,20 +20,16 @@ Usage:
 
 import argparse
 from pathlib import Path
-from typing import Literal
 
 import joblib
 import numpy as np
 import pandas as pd
-import polars as pl
 import xgboost as xgb
-from chickenstats.utilities import ChickenProgress
-from rich.progress import TaskID
 
-from chickenstats_xg.v1.config import CONTEXT_XG_FEATURE_COLUMNS, PASSTHROUGH_COLS, STRENGTHS
-from chickenstats_xg.v1.experiments import _apply_fixed_categoricals, _logit
-
-_StrengthArg = Literal["even", "powerplay", "shorthanded", "empty_for", "empty_against"]
+from chickenstats_xg.v1.config import CONTEXT_XG_FEATURE_COLUMNS, STRENGTHS
+from chickenstats_xg.v1.utils.transforms import apply_fixed_categoricals, logit
+from chickenstats_xg.v1.utils.rapm import prep_rapm
+from chickenstats_xg.v1.utils.scoring import apply_oof_predictions
 
 
 def score_strength(
@@ -56,12 +52,12 @@ def score_strength(
 
     # Compute logit_base_xg — used as both base_margin (residual learning) and
     # a feature (preserving interaction constraint groups).
-    logit_bm = _logit(df["base_xg"].to_numpy())
+    logit_bm = logit(df["base_xg"].to_numpy())
     df = df.assign(logit_base_xg=logit_bm)
 
     feat_cols = [c for c in CONTEXT_XG_FEATURE_COLUMNS if c in df.columns]
     X = df[feat_cols].copy()
-    X = _apply_fixed_categoricals(X, strength)
+    X = apply_fixed_categoricals(X, strength)
 
     booster = xgb.Booster()
     booster.load_model(str(model_path))
@@ -82,73 +78,13 @@ def score_strength(
     )
 
     # Override training-era shots with calibrated OOF predictions
-    oof_path = models_dir / strength / "oof.parquet"
-    if oof_path.exists():
-        oof_df = pd.read_parquet(oof_path).dropna(subset=["context_xg"])
-        oof_map = oof_df.set_index(["game_id", "event_idx"])["context_xg"]
-        idx = df.set_index(["game_id", "event_idx"]).index
-        in_oof = idx.isin(oof_map.index)
-        df.loc[in_oof, "context_xg"] = oof_map.reindex(idx[in_oof]).values
-        print(f"  [{strength}] {in_oof.sum():,} training shots replaced with OOF context_xg predictions.")
+    df = apply_oof_predictions(df, models_dir, strength, "context_xg")
 
     scored_dir.mkdir(parents=True, exist_ok=True)
     df.to_parquet(scored_dir / f"{strength}.parquet", index=False)
     print(f"  [{strength}] {len(df):,} shots scored → {scored_dir / f'{strength}.parquet'}")
     return True
 
-
-def _load_scored_xg(scored_dir: Path) -> pl.DataFrame:
-    """Combine all five strength-state context_xg scored parquets into a (game_id, event_idx) map."""
-    frames = [
-        pl.scan_parquet(scored_dir / f"{s}.parquet")
-        .select(["game_id", "event_idx", "context_xg"])
-        .with_columns(pl.col("context_xg").cast(pl.Float64))
-        for s in STRENGTHS
-        if (scored_dir / f"{s}.parquet").exists()
-    ]
-    return (
-        pl.concat(frames)
-        .group_by(["game_id", "event_idx"])
-        .agg(pl.col("context_xg").sum())
-        .collect()
-    )
-
-
-def _enrich_rapm_year(year_file: Path, scored_xg: pl.DataFrame, out_dir: Path) -> None:
-    """Add context_xg column to a single per-year RAPM PBP file."""
-    df = pl.read_parquet(year_file)
-    if "context_xg" in df.columns:
-        df = df.drop("context_xg")
-    df = (
-        df
-        .join(scored_xg, on=["game_id", "event_idx"], how="left")
-        .with_columns(pl.col("context_xg").fill_null(0.0))
-    )
-    out_dir.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(out_dir / year_file.name)
-
-
-def prep_rapm(scored_dir: Path) -> None:
-    """Enrich RAPM PBP parquets with context_xg column (additive — base_xg column is kept)."""
-    rapm_dir = scored_dir.parent.parent / "rapm" / "pbp"
-
-    pbp_files = sorted(rapm_dir.glob("pbp_*.parquet"))
-    if not pbp_files:
-        print("  [rapm] No RAPM PBP files found — run base_xg/score.py first.")
-        return
-
-    print("  [rapm] Loading scored context_xg for RAPM enrichment...")
-    scored_xg = _load_scored_xg(scored_dir)
-    print(f"  [rapm] {len(scored_xg):,} scored fenwick events loaded.")
-
-    with ChickenProgress(speed_estimate_period=300, transient=True) as progress:
-        task: TaskID = progress.add_task("Enriching RAPM PBP with context_xg...", total=len(pbp_files))
-        for pbp_file in pbp_files:
-            progress.update(task, description=f"Enriching {pbp_file.stem}...", refresh=True)
-            _enrich_rapm_year(pbp_file, scored_xg, rapm_dir)
-            progress.update(task, advance=1, refresh=True)
-
-    print(f"  [rapm] {len(pbp_files)} file(s) enriched with context_xg → {rapm_dir}")
 
 
 def main() -> None:
@@ -178,7 +114,8 @@ def main() -> None:
         if scored_count == 0:
             print("  [rapm] No strengths scored — skipping RAPM PBP enrichment.")
         else:
-            prep_rapm(scored_dir)
+            rapm_dir = base_dir / "data" / "rapm" / "pbp"
+            prep_rapm(rapm_dir, scored_dir, "context_xg")
 
     print("Done.")
 

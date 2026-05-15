@@ -32,6 +32,8 @@
 
 * **The Sigmoid Reveal:** After Tier 3 adds its adjustment, the final log-odds value is squashed through the `sigmoid` (inverse logit) function, returning a bounded probability between 0 and 1. This is `pred_goal` — the final cascade output, in standard probability space, ready for aggregation and display.
 
+* **The Final Calibration:** The sigmoid output is a bounded probability — but bounded does not mean calibrated. Tier 3's trees learn a talent adjustment on top of the Tier 2 prior; the residual fitting process can shift the probability scale. After training, `pred_goal` is Platt-recalibrated using hold-out predictions, anchoring the final output to the true observed goal rate. This is the step that makes `pred_goal` suitable for aggregation: summing calibrated probabilities across a player's shots gives their expected goals above system — a number with a real-world unit. Without recalibration, you have a relative score, not an expected count.
+
 ### Section 4: What's in Part 5
 
 We now have all three tiers computing. Architecture is complete. Part 5 moves from design to evidence — a full formal benchmark across all five strength states with the four-column cascade progression (`base_xg` → EH → `context_xg` → `pred_goal`) and every metric Evolving-Hockey has never published about themselves.

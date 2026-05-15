@@ -16,10 +16,10 @@ Usage:
 import argparse
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
+import polars as pl
 
-from chickenstats_xg.v1.config import CONTEXT_XG_FEATURE_COLUMNS, HOLD_OUT_SEASON, PASSTHROUGH_COLS, STRENGTHS
+from chickenstats_xg.v1.config import CONTEXT_XG_FEATURE_COLUMNS, PASSTHROUGH_COLS, STRENGTHS
+from chickenstats_xg.v1.utils.data_splitting import write_train_holdout_split
 
 _BM_EPS = 1e-7
 KEEP_COLS = ["season", "goal", "base_xg"] + CONTEXT_XG_FEATURE_COLUMNS + PASSTHROUGH_COLS
@@ -31,25 +31,19 @@ def process_strength(strength: str, scored_dir: Path, out_dir: Path) -> None:
         print(f"  [{strength}] No scored parquet at {scored_path} — run base_xg/finalize.py first.")
         return
 
-    df = pd.read_parquet(scored_path)
+    df = pl.read_parquet(scored_path)
 
     # Compute logit_base_xg — T1 prior passed as a learnable feature in each
     # flag constraint group so gbtree can learn quality-conditional flag effects.
-    p = df["base_xg"].clip(_BM_EPS, 1 - _BM_EPS)
-    df = df.assign(logit_base_xg=np.log(p / (1 - p)))
+    p = pl.col("base_xg").clip(_BM_EPS, 1 - _BM_EPS)
+    df = df.with_columns((p / (1.0 - p)).log().alias("logit_base_xg"))
 
     # Keep only the columns context_xg needs; tolerate missing optional cols
     keep = [c for c in KEEP_COLS if c in df.columns]
-    df = df[keep]
+    df = df.select(keep)
 
-    train = df[df["season"] < HOLD_OUT_SEASON].reset_index(drop=True)
-    hold_out = df[df["season"] >= HOLD_OUT_SEASON].reset_index(drop=True)
-
-    for split, name in [(train, "train"), (hold_out, "hold_out")]:
-        dest = out_dir / name
-        dest.mkdir(parents=True, exist_ok=True)
-        split.to_parquet(dest / f"{strength}.parquet", index=False)
-        print(f"  [{strength}] {name}: {len(split):,} shots → {dest / f'{strength}.parquet'}")
+    write_train_holdout_split(df, out_dir / "train", out_dir / "hold_out", strength)
+    print(f"  [{strength}] done → {out_dir}/train/{strength}.parquet + hold_out/{strength}.parquet")
 
 
 def main() -> None:

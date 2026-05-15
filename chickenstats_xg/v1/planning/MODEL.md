@@ -1,6 +1,6 @@
 # chickenstats-xg — v1.0.0 Cascade xG Model Reference
 
-> Last updated: 2026-05-14
+> Last updated: 2026-05-15
 
 This document is the definitive reference for the `v1.0.0` cascade xG model: what it is, how every script fits together, the full feature pipeline, training instructions, infrastructure requirements, and implementation status.
 
@@ -118,12 +118,26 @@ chickenstats-xg/
 │   ├── nuke_experiment.py             Delete MLflow experiment + Optuna study (version-agnostic)
 │   │
 │   └── v1/                            v1.0.0 version-specific code and data
-│       ├── xg_utils.py                Shared schema (xg_fields pandera) + prep_data()
 │       ├── experiments.py             Optuna tuning for all three tiers
 │       ├── config.py                  Feature column lists, strength states, constants
-│       ├── log_model.py               CLI: upload local model artifacts to MLflow Model Registry
-│       ├── MODEL.md                   This file
-│       ├── DECISIONS.md               Architectural decision log (issue history + resolved issues)
+│       │
+│       ├── planning/
+│       │   ├── MODEL.md               This file
+│       │   ├── DECISIONS.md           Architectural decision log (issue history + resolved issues)
+│       │   └── DIAGNOSTICS.md         Consolidated diagnostic run results (all three tiers)
+│       │
+│       ├── utils/                     Shared helpers (extracted from experiments.py 2026-05-15)
+│       │   ├── __init__.py
+│       │   ├── shot_features.py       prep_data() stateless feature engineering
+│       │   ├── artifacts.py           save/load model artifacts + meta.json metadata
+│       │   ├── finalize_utils.py      OOF predictions, trial selection, ECE calculation
+│       │   ├── calibration.py         IsotonicCalibrator wrapper
+│       │   ├── transforms.py          apply_fixed_categoricals, logit
+│       │   ├── scoring.py             apply_oof_predictions (OOF override for score.py)
+│       │   ├── data_splitting.py      write_train_holdout_split
+│       │   ├── rapm.py                RAPM PBP enrichment utilities
+│       │   ├── diagnose_utils.py      Shared diagnostic functions + extract_model_hyperparams
+│       │   └── log_model.py           CLI: upload local model artifacts to MLflow Model Registry
 │       │
 │       ├── base_xg/
 │       │   ├── process_data.py        Stateless feature engineering → train/hold_out parquets
@@ -586,7 +600,10 @@ DB_NAME=...
 | Script | Inputs | Outputs | Status |
 |---|---|---|---|
 | `raw_data/scrape_raw_data.py` | NHL API | `raw_data/pbp/pbp_{YYYY}.parquet` | ✅ Done |
-| `chickenstats_xg/v1/xg_utils.py` | — | `prep_data()`, `xg_pandera_polars` schema | ✅ Done |
+| `chickenstats_xg/v1/utils/shot_features.py` | — | `prep_data()` feature engineering (stateless) | ✅ Done |
+| `chickenstats_xg/v1/utils/artifacts.py` | — | `save/load_model_artifacts`, `save_model_metadata`, `params_from_run_name` | ✅ Done |
+| `chickenstats_xg/v1/utils/finalize_utils.py` | — | `compute_oof_predictions`, `screen_trials`, `select_top_trials`, `calculate_ece` | ✅ Done |
+| `chickenstats_xg/v1/utils/log_model.py` | Local model artifacts | Uploads frozen models to MLflow Model Registry | ✅ Done |
 | `chickenstats_xg/v1/experiments.py` | `data/{model}/train/` parquets | MLflow runs, Optuna trials (base_xg, context_xg, pred_goal) | ✅ Done |
 | `chickenstats_xg/v1/base_xg/process_data.py` | `raw_data/pbp/` | `chickenstats_xg/v1/data/base_xg/train/` + `hold_out/` | ✅ Done |
 | `chickenstats_xg/v1/base_xg/finalize.py` | train + hold_out parquets, Optuna study | `models/base_xg/{strength}/model.ubj` + `calibrator.joblib` + `meta.json` | ✅ Done |
@@ -740,51 +757,55 @@ uv run python chickenstats_xg/v1/rapm/diagnose.py
 
 ### 9.1 base_xg + pred_goal — XGBoost gbtree
 
+`_params_pred_goal = _params_base_xg` — pred_goal uses the identical search space.
+
 | Parameter | Type | Range | Notes |
 |---|---|---|---|
 | `max_depth` | int | 3–6 | Capped at 6 to prevent GOAL fingerprinting |
-| `min_child_weight` | int | 50–150 | High floor; low values allow leaf memorisation at ~8% positive rate |
-| `max_delta_step` | int | 1–10 | Floor of 1 ensures the step cap is always active |
-| `scale_pos_weight` | float | 1.0–10.0 | Searched; `empty_against` fixed at 1.0 (balanced) |
-| `learning_rate` | float (log) | 1e-3–0.3 | |
+| `min_child_weight` | int (log) | 20–200 | Log scale |
+| `max_delta_step` | int | 1–10 | Floor of 1 ensures the step cap is always active; tunable here (no base_margin, monotone constraints prevent bimodal cliff) |
+| `scale_pos_weight` | float | 1.0–10.0 | Searched up to min(data_spw, 10.0); `empty_against` fixed at 1.0 (balanced) |
+| `learning_rate` | float (log) | 1e-3–0.30 | No ceiling needed — mds tunable + no base_margin means high lr doesn't cause bimodal |
 | `gamma` | float | 0.0–5.0 | Upper end acts as hard gate against noisy splits |
-| `lambda` | float (log) | 0.1–10.0 | Raised floor; near-zero allows unconstrained leaf growth |
+| `lambda` | float (log) | 0.1–10.0 | ES 1.0.0 selected 9.354 (near ceiling); raise to 100.0 if future ES runs need stronger regularization |
 | `alpha` | float (log) | 1e-8–1.0 | L1 regularization |
 | `subsample` | float (step 0.05) | 0.4–1.0 | Row sampling |
-| `colsample_bytree` | float (step 0.05) | 0.4–0.65 | |
-| `colsample_bylevel` | float (step 0.05) | 0.4–0.8 | Per-depth feature subsampling |
+| `colsample_bytree` | float (step 0.05) | 0.6–1.0 | |
+| `colsample_bylevel` | float (step 0.05) | 0.6–1.0 | Per-depth feature subsampling |
+| `colsample_bynode` | float (step 0.05) | 0.6–1.0 | Per-split feature subsampling |
 
 Fixed:
 - `objective: binary:logistic`, `booster: gbtree`
-- `n_estimators: 500` (with `early_stopping_rounds: 50` on hold-out PR-AUC)
-- `eval_metric: ["logloss", "aucpr"]` — aucpr drives early stopping
+- `n_estimators: 500` (with `early_stopping_rounds: 50`)
+- `eval_metric: ["aucpr", "logloss"]` — early stopping on logloss (last metric)
 - `enable_categorical: True`
 - `random_state: 615`
-- `interaction_constraints` (base_xg only) — from `BASE_XG_INTERACTION_GROUPS` in `config.py`
+- `monotone_constraints: {event_distance: -1, event_angle: -1}` (base_xg only; filtered to columns present)
 
 ### 9.2 context_xg — XGBoost gbtree (depth=2, flag+state isolation)
 
 | Parameter | Type | Range | Notes |
 |---|---|---|---|
-| `max_delta_step` | int | 1–10 | **Critical parameter.** mds=1 prevents bimodal cliff; mds≥2 produces large leaf weights that cluster non-goal shots at high predicted probabilities. Calibrated top-N screening in finalize.py reliably selects mds=1 trials. |
-| `min_child_weight` | int (log) | 20–200 | Log scale; higher floor than base_xg (lower event counts per flag group) |
-| `gamma` | float | 0.0–6.0 | Wider range required — selected trials span 1.4–5.7 across strength states |
-| `lambda` | float (log) | 0.1–100.0 | L2 regularization; high values (47–96) selected for ES/EA indicating strong shrinkage needed |
-| `alpha` | float (log) | 1e-6–5.0 | L1 regularization |
+| `max_delta_step` | **fixed: 1** | — | **Not tunable.** mds ≥ 2 causes bimodal cliff: large per-tree leaf updates accumulate into a high-probability cluster for flag shots. Fixed in the search space (not trial-suggested). |
+| `min_child_weight` | int (log) | 100–500 | Floor raised from 20/50 — lower values caused low-decile overestimation for SH/EF (sparse flag groups) |
+| `gamma` | float | 1.0–10.0 | Floor raised from 0.0 — prevents unconstrained splits; 1.0.0 trials span 1.4–5.7 |
+| `lambda` | float (log) | 10.0–200.0 | Floor 10.0 critical — lambda < 10 produces bimodal even with mds=1; 1.0.0 EA selected 95.62 (near old 100.0 ceiling) |
+| `alpha` | float (log) | 0.1–10.0 | Floor raised from 1e-6 |
 | `subsample` | float (step 0.05) | 0.5–1.0 | Row sampling; higher floor (flag groups sparse) |
-| `learning_rate` | float (log) | 0.01–0.3 | |
-| `scale_pos_weight` | float | 1.0–2.0 | Narrow range; not applicable to `empty_against` (fixed at 1.0) |
+| `learning_rate` | float (log) | 0.01–**0.20** | **Ceiling 0.20 (not 0.30).** All passing 1.0.0 models had lr ≤ 0.21. Above 0.20, TPE converges to high-lr configs that look calibrated on the anomalous 2023-24 CV test year but accumulate enough log-odds over 50–130 trees to produce a bimodal distribution on the real 2024-25 hold-out. |
+| `scale_pos_weight` | float | 1.0–3.0 | Cap 3.0 (vs 10.0 for base_xg); base_margin already anchors the base rate, so spw near 1.0 is expected |
 
 Fixed:
 - `objective: binary:logistic`, `booster: gbtree`
 - `max_depth: 2` — fixed, not tuned. Depth-3 allows cross-group paths (defeating isolation).
+- `max_delta_step: 1` — fixed, not tuned. See above.
 - `interaction_constraints` — from `_build_context_interaction_constraints(list(X_train.columns))` (9 groups)
 - `base_margin` — `logit_base_xg` passed as base_margin to model.fit() in addition to its role as a feature column
 - `n_estimators: 500` (with `early_stopping_rounds: 50`)
 - `eval_metric: ["aucpr", "logloss"]` — early stopping on logloss (last metric); aucpr-only stopping caused bimodal collapse (model stopped when ranking plateaued before calibration settled)
 - `enable_categorical: True`
 - `random_state: 615`
-- No `colsample_bytree`, `colsample_bylevel`, `colsample_bynode` — column sampling disabled
+- No `colsample_*` — column sampling selects features before constraints are applied; omitting a group's features from a tree silently degenerates that constraint group
 
 CV: **3-fold `TimeSeriesSplit`** inside Optuna (not `shuffle`) for all tiers. A full model (no early stopping) is also trained on `X_train` and evaluated on `X_test` for final test metrics.
 
@@ -967,8 +988,11 @@ Rolling stats and RAPM are updated nightly by the scraper; RAPM is refreshed onc
 | Script | Status |
 |---|---|
 | `raw_data/scrape_raw_data.py` | ✅ Complete |
-| `chickenstats_xg/v1/xg_utils.py` | ✅ Complete (multi-RAPM schema + event_idx) |
-| `chickenstats_xg/v1/experiments.py` | ✅ Complete (base_xg, context_xg gbtree depth-2, pred_goal; fully refactored 2026-05-12) |
+| `chickenstats_xg/v1/utils/shot_features.py` | ✅ Complete (prep_data(); extracted from xg_utils.py) |
+| `chickenstats_xg/v1/utils/artifacts.py` | ✅ Complete (save/load model artifacts, meta.json; extracted 2026-05-15) |
+| `chickenstats_xg/v1/utils/finalize_utils.py` | ✅ Complete (OOF predictions, trial screening, ECE; extracted 2026-05-15) |
+| `chickenstats_xg/v1/utils/log_model.py` | ✅ Complete (upload local artifacts to MLflow Model Registry) |
+| `chickenstats_xg/v1/experiments.py` | ✅ Complete (base_xg, context_xg gbtree depth-2, pred_goal; fully refactored 2026-05-12; finalize utils extracted 2026-05-15) |
 | `chickenstats_xg/v1/base_xg/process_data.py` | ✅ Complete |
 | `chickenstats_xg/v1/base_xg/finalize.py` | ✅ Complete |
 | `chickenstats_xg/v1/base_xg/score.py` | ✅ Complete |
@@ -993,16 +1017,18 @@ Rolling stats and RAPM are updated nightly by the scraper; RAPM is refreshed onc
 | 1 | Scrape raw PBP (2010–2024) | ✅ Done |
 | 2 | Build base_xg training data (8 pure geometry features) | ✅ Done |
 | 3 | Tune base_xg (500+ trials ES/PP/SH; 150+ EF; 590+ EA) | ✅ Done (2026-05-13) |
-| 4a | Finalize base_xg (new model selection) + diagnostics (ES/PP/SH/EF PASS, EA FAIL-struct) | ✅ Done (2026-05-14) |
-| 4b | Score all PBP + build context_xg data (`base_xg/run_pipeline.py --skip-finalize`) | ⏳ Current Step |
-| 5 | RAPM regressions bootstrap (base_xg xGF proxy) | ⬜ After step 4b |
-| 6 | Build context_xg training data (`context_xg/process_data.py`) | ⬜ After step 4b |
-| 7 | Tune context_xg (750+ ES / 1000+ PP/SH/EF/EA) | ⬜ After step 6 (prior tuning available as warm-start) |
-| 8 | Finalize context_xg `--top-n 150` + validate diagnostics | ⬜ After step 7 |
-| 9 | Score context_xg + rebuild RAPM stints/regressions + build pred_goal data (`context_xg/run_pipeline.py`) | ⬜ After step 8 |
-| 10 | Tune pred_goal (500+ trials × 5 strengths) | ⬜ After step 9 |
-| 11 | Finalize pred_goal | ⬜ After step 10 |
-| 12 | Validate all tiers (base_xg / context_xg / pred_goal / rapm diagnose.py) | ⬜ After step 11 |
+| 4a | Finalize base_xg + diagnostics (ES/PP/SH/EF PASS, EA WARN-high-conf) | ✅ Done (2026-05-14) |
+| 4b | Score all PBP + build context_xg data (`base_xg/run_pipeline.py`) | ✅ Done (2026-05-14) |
+| 5 | RAPM regressions bootstrap | ✅ Done (2026-05-14) |
+| 6 | Tune context_xg (750+ ES / 1000+ PP/SH/EF/EA; SH study nuked + restarted) | ✅ Done (2026-05-14) |
+| 7 | Finalize context_xg `--top-n 150` + validate diagnostics (all PASS; EA WARN-structural) | ✅ Done (2026-05-14) |
+| 8 | Score context_xg + rebuild RAPM stints/regressions + build pred_goal data | ✅ Done (2026-05-14) |
+| 9 | Tune pred_goal (500 trials × 5 strengths) | ✅ Done (2026-05-14) |
+| 10 | Finalize pred_goal (pooled OOF + hold-out calibration) | ✅ Done (2026-05-14) |
+| 11 | Diagnose pred_goal — all FAIL; Issues 14+15 documented | ✅ Done (2026-05-14) |
+| 12 | Issue 15 fix — strip `_1g` features + RAPM subset to xg dims (code applied) | ✅ Code done (2026-05-14) |
+| 13 | Re-run pred_goal: `process_data.py` → re-tune 500+ trials → re-finalize → re-diagnose | ⏳ Current Step |
+| 14 | Validate all tiers (base_xg / context_xg / pred_goal / rapm diagnose.py) | ⬜ After step 13 |
 
 ### Data Status
 
@@ -1011,18 +1037,18 @@ Rolling stats and RAPM are updated nightly by the scraper; RAPM is refreshed onc
 | `raw_data/pbp/pbp_*.parquet` | ✅ Present (2010–2024) |
 | `chickenstats_xg/v1/data/base_xg/train/` | ✅ Present (8-feature pure geometry parquets) |
 | `chickenstats_xg/v1/data/base_xg/hold_out/` | ✅ Present |
-| `chickenstats_xg/v1/data/base_xg/scored/` | ⏳ Stale — scored with prior base_xg; needs rebuild after step 4b |
-| `chickenstats_xg/v1/models/base_xg/` | ✅ Present — v1.0.0 refinalized 2026-05-14 (ES/PP/SH/EF PASS, EA FAIL-struct) |
-| `chickenstats_xg/v1/data/context_xg/train/` | ⏳ Stale — needs rebuild after base_xg rescore |
-| `chickenstats_xg/v1/data/context_xg/hold_out/` | ⏳ Stale — needs rebuild after base_xg rescore |
-| `chickenstats_xg/v1/data/context_xg/scored/` | ⏳ Stale — needs rebuild after context_xg retuning |
-| `chickenstats_xg/v1/models/context_xg/` | ⏳ Stale — needs retuning/refinalization after base_xg rescore |
-| `chickenstats_xg/v1/data/rapm/pbp/` | ⏳ Stale — needs rebuild after base_xg rescore |
-| `chickenstats_xg/v1/data/rapm/stints/` | ⏳ Stale — needs rebuild after context_xg rescore |
-| `chickenstats_xg/v1/data/rapm/rapm_by_season.parquet` | ⏳ Stale — needs re-regression after context_xg rescore |
-| `chickenstats_xg/v1/data/pred_goal/train/` | ⏳ Stale — needs rebuild after RAPM rebuild |
-| `chickenstats_xg/v1/data/pred_goal/hold_out/` | ⏳ Stale — needs rebuild after RAPM rebuild |
-| `chickenstats_xg/v1/models/pred_goal/` | ⬜ Not yet generated (pending Steps 10–11) |
+| `chickenstats_xg/v1/data/base_xg/scored/` | ✅ Present — rebuilt 2026-05-14 with v1.0.0 base_xg |
+| `chickenstats_xg/v1/models/base_xg/` | ✅ Present — v1.0.0 finalized 2026-05-14 (ES/PP/SH/EF PASS, EA WARN-high-conf) |
+| `chickenstats_xg/v1/data/context_xg/train/` | ✅ Present — rebuilt 2026-05-14 |
+| `chickenstats_xg/v1/data/context_xg/hold_out/` | ✅ Present — rebuilt 2026-05-14 |
+| `chickenstats_xg/v1/data/context_xg/scored/` | ✅ Present — scored 2026-05-14 with v1.0.0 context_xg |
+| `chickenstats_xg/v1/models/context_xg/` | ✅ Present — v1.0.0 finalized 2026-05-14 `--top-n 150` (ES/PP/SH/EF PASS; EA WARN) |
+| `chickenstats_xg/v1/data/rapm/pbp/` | ✅ Present — enriched 2026-05-14 with base_xg + context_xg |
+| `chickenstats_xg/v1/data/rapm/stints/` | ✅ Present — rebuilt 2026-05-14 using context_xg for h_xgf/a_xgf |
+| `chickenstats_xg/v1/data/rapm/rapm_by_season.parquet` | ✅ Present — re-regressed 2026-05-14 with context_xg as xGF target |
+| `chickenstats_xg/v1/data/pred_goal/train/` | ⏳ Stale — needs rebuild with Issue 15 feature set (strip `_1g`, subset RAPM) |
+| `chickenstats_xg/v1/data/pred_goal/hold_out/` | ⏳ Stale — needs rebuild |
+| `chickenstats_xg/v1/models/pred_goal/` | ⏳ Present (v1 with old features) — re-tune + re-finalize after process_data.py re-run |
 
 ---
 
@@ -1072,4 +1098,4 @@ No critical blockers remain. All scripts are implemented. base_xg and context_xg
 
 ---
 
-*This document reflects the state as of 2026-05-14. Three-tier cascade architecture: base_xg (8 pure geometry + shot_type features, OOF isotonic calibration) → context_xg (20 features: logit_base_xg as BOTH base_margin AND feature in 9 constraint groups + binary flags + game-state modifiers + sequence, gbtree depth-2, pooled OOF + hold-out Platt calibration; finalize with `--top-n 150`) → pred_goal (talent features only, logit(context_xg) as base_margin). base_xg refinalized 2026-05-14 with new model selection (ES/PP/SH/EF PASS, EA FAIL-struct); pipeline at Step 4b (base_xg rescore → context_xg rebuild). See `chickenstats_xg/v1/DECISIONS.md` for the full issue history and proposed refactors.*
+*This document reflects the state as of 2026-05-15. Three-tier cascade architecture: base_xg (8 pure geometry + shot_type features, OOF isotonic calibration) → context_xg (20 features: logit_base_xg as BOTH base_margin AND feature in 9 constraint groups + binary flags + game-state modifiers + sequence, gbtree depth-2, pooled OOF + hold-out Platt calibration; finalize with `--top-n 150`) → pred_goal (talent features only, logit(context_xg) as base_margin). All tiers trained 2026-05-14; pipeline at Step 13 (pred_goal re-run with Issue 15 feature redesign — strip `_1g` features + subset RAPM to xg dims). Utils modularization completed 2026-05-15: finalize_utils.py, artifacts.py, diagnose_utils.py. See `chickenstats_xg/v1/planning/DECISIONS.md` for the full issue history.*

@@ -716,7 +716,7 @@ In empty-against situations, the goalie has been pulled. Goalie form/talent feat
 - **RAPM subsetting:** Reduce `_RAPM_COEFF_COLS` in `process_data.py` from 6 dims (xg, corsi, goals × off/def) to 2 (xg_off, xg_def only). Drop corsi (shot-volume signal, not shot-quality signal — context_xg already captures shot difficulty) and goals (rare binary events → very noisy RAPM estimates). `_OFF_METRICS` changed from `["xg", "corsi", "goals"]` to `["xg"]`, reducing differentials from 6 to 2. Total RAPM features: 36 → 14.
 - **Option 3 (EA pass-through) and max_depth=1:** Deferred. Address after re-tuning confirms whether lift improves with cleaner features.
 
-**Code changes applied (`1_0_0/pred_goal/`):**
+**Code changes applied (`chickenstats_xg/v1/pred_goal/`):**
 
 | File | Change |
 |---|---|
@@ -725,18 +725,19 @@ In empty-against situations, the goalie has been pulled. Goalie form/talent feat
 
 **Operational sequence (pending):**
 
-```
+```bash
 # Step 15A — Regenerate pred_goal train/hold_out parquets with new feature set:
-uv run python 1_0_0/pred_goal/process_data.py
+uv run python chickenstats_xg/v1/pred_goal/process_data.py
 
 # Step 15B — Re-tune (existing Optuna studies are stale — feature columns changed):
-experiments.py --model pred_goal --strength {all} --version 1.0.0 --trials 500
+uv run experiments --model pred_goal --strength even_strength --version 1.0.0 --trials 500
+# ... (repeat for all 5 strengths)
 
 # Step 15C — Re-finalize:
-pred_goal/finalize.py --all --version 1.0.0 --no-log
+uv run finalize-pred --all --version 1.0.0 --no-log
 
 # Step 15D — Re-diagnose:
-pred_goal/diagnose.py
+uv run diagnose-pred-goal
 ```
 
 **Expected improvements:**
@@ -776,22 +777,20 @@ models.
 
 ---
 
-### R2: OOF loop copy-pasted across 3 finalize scripts
+### R2: OOF loop copy-pasted across 3 finalize scripts — ✅ DONE (2026-05-15)
 
-`base_xg/finalize.py`, `context_xg/finalize.py`, and `pred_goal/finalize.py` each implement
+`base_xg/finalize.py`, `context_xg/finalize.py`, and `pred_goal/finalize.py` each implemented
 an independent OOF `TimeSeriesSplit` loop. The structure is identical; the differences are the
 calibrator type (isotonic vs. Platt) and whether `base_margin` is required.
 
-**Why deferred:** Per-tier calibrator differences (empty_against isotonic, context_xg Platt,
-pred_goal isotonic) make a clean extraction non-trivial. Risk of introducing a subtle
-calibrator-selection bug.
-
-**Done when:** A shared `run_oof_calibration(X, y, bm, model_params, calibrator_factory, n_splits)`
-function in `experiments.py` (or a new `train_utils.py`) used by all three finalize scripts.
+**Completed (2026-05-15):** `compute_oof_predictions()` extracted to `utils/finalize_utils.py`.
+All three finalize scripts now import and call the shared implementation. Per-tier calibrator
+selection logic (LogisticRegression vs IsotonicCalibrator) correctly remains in each finalize script —
+only the fold loop and prediction array assembly are shared.
 
 ---
 
-### R3: `sys.path.insert()` boilerplate (all tier scripts)
+### R3: `sys.path.insert()` boilerplate (all tier scripts) — ✅ DONE (2026-05-15)
 
 Every script under `base_xg/`, `context_xg/`, `pred_goal/`, and `rapm/` adds:
 
@@ -803,12 +802,9 @@ sys.path.insert(0, str(_Path(__file__).parent.parent))
 
 to import `config.py` and `experiments.py` from the parent `1_0_0/` directory.
 
-**Why deferred:** Fix requires restructuring `1_0_0/` as a proper Python package
-(`__init__.py` + editable `pyproject.toml` install) and updating every import path. Medium-effort,
-no functional benefit during training.
-
-**Done when:** `1_0_0/` is an installable package (`uv pip install -e .`); all `sys.path.insert`
-lines are removed; imports are `from chickenstats_xg.config import ...`.
+**Completed (2026-05-15):** `chickenstats_xg/` is an editable package installed via
+`uv pip install -e .` (`pyproject.toml` entry points). All `sys.path.insert` lines removed.
+Imports use `from chickenstats_xg.v1.config import ...` throughout.
 
 ---
 
@@ -852,7 +848,7 @@ detail level.
 | 12 | Post-base_margin diagnostics — middle-band overestimation (ES/PP/EF/EA); SH catastrophic regression (bimodal at 0.78–0.82). Root cause: bimodal (mds≥2) trials dominate top-15 in flat CV landscape; mds=1 candidates at rank 16+. Fix: `--top-n 150` | ✅ RESOLVED (2026-05-14) — ES/PP/SH/EF PASS; EA WARN (structural mid-range, acceptable) |
 | 13 | diagnose.py check logic errors — distribution check inverted (GOAL/SHOT ratio flagged good discrimination as FAIL); high-confidence check used fixed thresholds regardless of base rate (EA FAIL despite correct calibration) | ✅ RESOLVED (2026-05-14) — SHOT p90/base_rate check; base-rate-scaled high-conf thresholds |
 | 14 | pred_goal OOF calibration temporal drift — OOF-only Platt calibrator learned training-era talent matchup statistics (goalie_gsax_per_shot_1g as dominant feature) that don't hold in hold-out; ES log loss 10.9× null, PP/SH/EF 3–5× null | ✅ RESOLVED (2026-05-14) — pooled OOF + hold-out calibration; log loss improved to 1.13–1.23× null; residual decile-8 miscalibration remains (FAIL, max err 0.13–0.19) |
-| 15 | pred_goal negligible lift (+0.0001–+0.0009 PR AUC over context_xg for non-EA) and EA negative lift (−0.034 PR AUC); RAPM features < 1% gain; model dominated by noisy short-horizon goalie rolling features | 🔄 IN PROGRESS (2026-05-14) — strip `_1g` features + subset RAPM to xg dims (code applied); process_data → experiments → finalize → diagnose pending |
+| 15 | pred_goal negligible lift (+0.0001–+0.0009 PR AUC over context_xg for non-EA) and EA negative lift (−0.034 PR AUC); RAPM features < 1% gain; model dominated by noisy short-horizon goalie rolling features | 🔄 IN PROGRESS — strip `_1g` features + subset RAPM to xg dims (code applied 2026-05-14); process_data → re-tune → finalize → diagnose pending |
 
 ---
 
@@ -916,13 +912,13 @@ experiments.py --model context_xg --strength empty_against  --version 1.0.0 --tr
 
 # ⚠️  CURRENT: Step 15 — pred_goal feature re-design (Issue 15 fix):
 #   Step 15A: compute_rolling_stats.py + process_data.py changes — ✅ CODE DONE (2026-05-14)
-uv run python 1_0_0/pred_goal/process_data.py     # regenerate parquets with new feature set
-experiments.py --model pred_goal --strength {all} --version 1.0.0 --trials 500   # re-tune (studies stale)
-pred_goal/finalize.py --all --version 1.0.0 --no-log
-pred_goal/diagnose.py
+uv run python chickenstats_xg/v1/pred_goal/process_data.py     # regenerate parquets with new feature set
+uv run experiments --model pred_goal --strength even_strength --version 1.0.0 --trials 500   # × 5 strengths
+uv run finalize-pred --all --version 1.0.0 --no-log
+uv run diagnose-pred-goal
 
 # AFTER Step 15 completes:
-rapm/diagnose.py
-base_xg/diagnose.py     # re-confirm no regression
-context_xg/diagnose.py  # re-confirm no regression
+uv run diagnose-rapm
+uv run diagnose-base-xg       # re-confirm no regression
+uv run diagnose-context-xg    # re-confirm no regression
 ```

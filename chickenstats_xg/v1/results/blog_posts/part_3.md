@@ -13,7 +13,7 @@
 
 * **The Reality Check:** The NHL play-by-play data does not track passes. What it *does* track explicitly are event type flags: whether a shot followed a rebound, whether it came off a rush, whether it was a scramble situation. These are labeled directly in the event stream — not inferred.
 * **The Genuinely Inferred Quantities:** What we *do* have to compute from physics: how fast the puck was moving (`play_speed = distance_from_last / seconds_since_last`), how long since the last event, how far the puck traveled between events. If a shot happens 2.5 seconds after a faceoff win from 120 feet away, the puck moved at roughly 48 feet per second — we can see the fingerprint of that breakout pass in the coordinates and timestamps, even without the pass itself recorded.
-* **The Goal of Tier 2:** Tier 2 does not re-predict whether the shot goes in. It predicts *how much the pre-shot sequence changes the geometric baseline* established in Part 2. The logit of the Tier 1 probability is passed forward; Tier 2 learns only the residual — the contextual adjustment on top of the spatial prior.
+* **The Goal of Tier 2:** Tier 2 does not re-predict whether the shot goes in. It predicts *how much the pre-shot sequence changes the geometric baseline* established in Part 2. The logit of the Tier 1 probability is passed forward; Tier 2 learns only the residual — the contextual adjustment on top of the spatial prior. This residual framing has a hard prerequisite: `base_xg` must be *calibrated*. If the model predicts 0.12 for a shot that actually goes in 8% of the time, `logit(0.12)` anchors Tier 2 at the wrong baseline — Tier 2 would spend capacity correcting Tier 1 miscalibration instead of learning sequence signal. OOF calibration in Part 2 is not a cosmetic step; it is what makes the logit bridge architecturally valid.
 
 ### Section 2: Feature Engineering — Four Families of Context
 
@@ -50,6 +50,8 @@ The 20 context features are grouped into four distinct families:
 
 **Role 1 — `base_margin` (gradient anchor):** The logit of the Tier 1 probability is passed to XGBoost's `base_margin` parameter. Every tree starts its residual computation from this anchor point rather than from zero. Without it, trees must predict the full probability range from scratch, causing high-flag shots to cluster at intermediate probabilities regardless of underlying shot quality — a bimodal distribution that no calibrator can fully resolve.
 
+The mathematical guarantee here is calibration: because `base_xg` has been OOF-calibrated before the logit transform, `logit_base_xg` is a true log-odds value — not an arbitrary score. Tier 2's trees start their residual gradient computation from a correct prior, not a shifted one.
+
 **Role 2 — Learnable feature in constraint groups:** `logit_base_xg` is *also* included in the feature matrix. In each of the 9 interaction constraint groups, it is paired with one other feature. This lets a depth-2 tree ask: "Given that this shot has *this* geometry quality, how much does `is_rebound` adjust the danger?" A rebound from the slot is far more dangerous than a rebound from behind the goal line — the feature role lets the model learn this quality-conditional adjustment. Without it, each group degenerates to a single binary split (equivalent to a linear additive coefficient), losing the quality-conditional structure entirely.
 
 **The architecture diagram for this post must show both arrows** from `logit_base_xg`: one to the `base_margin` input and one into the feature matrix.
@@ -79,6 +81,16 @@ Is logit_base_xg > −2.1  (base_xg ≈ 11%)?
   NO  + is_rebound == 0  →  +0.0 log-odds
 ```
 The model learned: *a rebound matters more when the underlying shot quality was already high.* That is hockey physics, not memorization.
+
+### Section 4b: Calibration as an Architectural Constraint
+
+Three specific design decisions in Tier 2 are calibration decisions, not just accuracy decisions:
+
+**`logloss` early stopping over `aucpr`:** XGBoost's early stopping criterion is the last metric in `eval_metric`. The cascade uses `["aucpr", "logloss"]` — logloss last. Pure `aucpr` stopping produces ranking-good, calibration-bad models: the trees stop when they can no longer improve the ranking of shots, but the predicted probabilities may still be systematically inflated or compressed. Logloss penalizes confident wrong predictions directly, so stopping on logloss keeps the probability scale anchored.
+
+**`max_delta_step=1` as a structural constraint:** This caps each tree's per-leaf Newton step at 1 log-odds unit. Without it, trees in flag-heavy constraint groups accumulate large positive weights — every tree that fires on `is_rebound=1` adds to the previous one, and after dozens of boosting rounds, shots with multiple active flags receive predictions near 1.0. This is the bimodal cliff: the model bifurcates into "definitely a goal" and "definitely not" with nothing in between. That is a calibration failure — not just a ranking artifact.
+
+**OOF + Platt calibration on the output:** After training, the raw Tier 2 output is Platt-calibrated on OOF predictions, ensuring `context_xg` values are on the same probability scale as `base_xg`. This is required for the Tier 3 logit bridge to work correctly for the same reason stated in Section 1.
 
 ### Section 5: What the Model Learned (SHAP)
 
@@ -111,7 +123,7 @@ The model learned: *a rebound matters more when the underlying shot quality was 
 
 **6. The Bimodal Cliff: Before vs. After (Dual Histogram) — Priority Visual**
 * *What it is:* Two side-by-side panels. Each panel has two overlapping kernel density curves: SHOT predictions (blue) and GOAL predictions (red). Left panel = a bimodal trial (`max_delta_step=3`, SHOT p90=0.71 — all non-goal shots pushed to high probability). Right panel = the production model (`max_delta_step=1`, SHOT p90=0.08 — clean separation).
-* *Why:* This is the most important original visualization in the entire series. No other public hockey xG post has shown the bimodal cliff failure mode. It makes the `mds=1` constraint feel inevitable rather than arbitrary, and tells the model selection story without requiring the reader to understand log-odds accumulation.
+* *Why:* This is the most important original visualization in the entire series. No other public hockey xG post has shown the bimodal cliff failure mode. It makes the `mds=1` constraint feel inevitable rather than arbitrary, and tells the model selection story without requiring the reader to understand log-odds accumulation. This is a **calibration failure** — not merely a ranking artifact. The bimodal model's non-goal shots are confidently wrong (predicted near 1.0), making its probabilities untrustworthy for aggregation even if its ROC-AUC looks reasonable. `mds=1` is the constraint that keeps calibration intact.
 * *Data:* Rerun inference on a bimodal trial (pull stored params from Optuna DB for any `mds≥2` ES trial, retrain on training data, predict hold-out) vs. production scored parquet. Alternatively: use scored parquets from the 2026-05-14 top-n=15 bimodal run (changelog entry) if still on disk.
 * *Color:* SHOT = Steel Blue, GOAL = Crimson. Left panel title: "mds=3 (Bimodal — Calibration FAIL)". Right panel title: "mds=1 (Production — Calibration PASS)". Vertical line at base rate.
 

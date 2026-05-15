@@ -19,7 +19,6 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import joblib
 import mlflow
 import mlflow.xgboost
 import numpy as np
@@ -44,20 +43,25 @@ from chickenstats_xg.v1.config import (
     STRENGTHS,
 )
 from chickenstats_xg.v1.experiments import (
-    IsotonicCalibrator,
-    MAX_DEPTH_CAP,
-    _apply_fixed_categoricals,
-    compute_oof_predictions,
-    load_model_artifacts,
     load_optuna_storage,
     log_viz,
     model_metrics,
     model_viz,
+)
+from chickenstats_xg.v1.utils.artifacts import (
+    load_model_artifacts,
     params_from_run_name,
+    save_model_artifacts,
     save_model_metadata,
+)
+from chickenstats_xg.v1.utils.finalize_utils import (
+    MAX_DEPTH_CAP,
+    compute_oof_predictions,
     screen_trials,
     select_top_trials,
 )
+from chickenstats_xg.v1.utils.calibration import IsotonicCalibrator
+from chickenstats_xg.v1.utils.transforms import apply_fixed_categoricals
 
 NON_FEATURE_COLS = ["goal", "season"] + PASSTHROUGH_COLS
 
@@ -66,7 +70,7 @@ def _split_df(df: pd.DataFrame, strength: str) -> tuple[pd.DataFrame, pd.Series]
     """Return (X_features, y) selecting only BASE_XG_FEATURE_COLUMNS."""
     y = df["goal"].copy()
     feat_cols = [c for c in BASE_XG_FEATURE_COLUMNS if c in df.columns]
-    X = _apply_fixed_categoricals(df[feat_cols], strength)
+    X = apply_fixed_categoricals(df[feat_cols], strength)
     return X, y
 
 
@@ -166,15 +170,7 @@ def _finalize_one(
 
     models_dir = Path(__file__).parent.parent / "models" / "base_xg"
     strength_dir = models_dir / strength
-    strength_dir.mkdir(parents=True, exist_ok=True)
-    model.get_booster().save_model(str(strength_dir / "model.ubj"))
-    joblib.dump(calibrator, strength_dir / "calibrator.joblib")
-
-    # OOF parquet stores calibrated predictions so score.py can override training-era shots
-    # with unbiased, calibrated values without needing to load or apply the calibrator itself.
-    oof_df = train_df[["game_id", "event_idx"]].reset_index(drop=True).copy()
-    oof_df["base_xg"] = np.where(oof_mask, calibrator.predict_proba(oof_prob.reshape(-1, 1))[:, 1], np.nan)
-    oof_df.to_parquet(strength_dir / "oof.parquet", index=False)
+    save_model_artifacts(model, calibrator, strength_dir, train_df, oof_prob, oof_mask, "base_xg", params=params)
     print(f"  [{strength}] saved → {strength_dir}/model.ubj + calibrator.joblib + oof.parquet + scored parquet")
 
     save_model_metadata(

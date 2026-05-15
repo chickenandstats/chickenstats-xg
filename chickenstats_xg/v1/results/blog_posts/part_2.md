@@ -30,7 +30,8 @@
 ### Section 5: The Handoff (Setting up Tier 2)
 * **The Conclusion:** We now have a robust `base_xg` for every shot. A 30-foot wrist shot might be a $0.06$ ($6\%$) chance. 
 * **The Cliffhanger:** Remind the reader of the "Credit Assignment Problem." What happens if that 30-foot wrist shot was taken while the goalie was completely out of position after a cross-ice pass? The $6\%$ geometric baseline is wrong. 
-* **The Bridge:** Briefly reiterate that we take this $6\%$ (`base_xg`), convert it to log-odds using the `logit` function, and pass it forward as the `base_margin` for Tier 2, which we will build in Part 3.
+* **The Calibration Step:** Before the 6% baseline can be handed to Tier 2, it must be calibrated. A raw XGBoost probability of 0.06 is only meaningful if shots the model scores at 0.06 actually go in 6% of the time. To enforce this, we apply Out-of-Fold (OOF) calibration using isotonic regression: each shot's calibrated probability is predicted by a fold that never saw that shot during training. The calibrated output is what gets logit-transformed and passed forward. Without this step, `logit(base_xg)` is an anchor built on a shifted scale — the entire residual-learning architecture of Tier 2 would be correcting Tier 1 miscalibration instead of learning sequence signal.
+* **The Bridge:** Briefly reiterate that we take this calibrated $6\%$ (`base_xg`), convert it to log-odds using the `logit` function, and pass it forward as the `base_margin` for Tier 2, which we will build in Part 3.
 
 ## 3. Required Analyses, Charts, and Visuals
 
@@ -71,3 +72,4 @@
 * **Cell 4 (Model Training):** The actual `xgboost.train()` code block. Show the exact hyperparameter dictionary used for the `base_xg` model.
 * **Cell 5 (SHAP Extraction):** Code to generate the SHAP values and plot the Summary chart using the `shap` library.
 * **Cell 6 (Rink Plotting):** Provide the exact `matplotlib` code (ideally using a package like `hockey_rink` or a custom background image) to generate the Spatial Prior Heatmap.
+* **Cell 7 (OOF Calibration):** Show the `TimeSeriesSplit` OOF loop — for each fold, fit the model on the training split, predict the held-out split, and collect OOF probabilities. Fit isotonic regression on the pooled OOF predictions. Show a before/after reliability diagram (predicted vs. actual goal rate by decile) confirming the calibrator pulls the curve to the diagonal. This is the step that makes `logit(base_xg)` a valid log-odds anchor for Tier 2.

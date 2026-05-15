@@ -22,18 +22,11 @@ import pandas as pd
 import sklearn
 import sklearn.metrics
 import xgboost as xgb
-from chickenstats.chicken_nhl._game_utils import (
-    POSITIONS,
-    PRIOR_EVENT_TYPES,
-    SHOT_TYPES,
-    STRENGTH_STATE_CATS,
-)
 from dotenv import load_dotenv
 from matplotlib.figure import Figure
 from mlflow.data.pandas_dataset import PandasDataset, from_pandas
 from mlflow.entities import LoggedModelInput, Metric, RunInfo
 from mlflow.models.signature import infer_signature
-from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, log_loss as sklearn_log_loss
 from sklearn.model_selection import TimeSeriesSplit
@@ -56,6 +49,19 @@ from chickenstats_xg.v1.config import (
 )
 from chickenstats_xg.utilities.charts import all_classifier_charts
 from chickenstats_xg.utilities.style import set_style
+from sklearn.isotonic import IsotonicRegression
+from chickenstats_xg.v1.utils.artifacts import load_model_artifacts, params_from_run_name, save_model_metadata
+from chickenstats_xg.v1.utils.calibration import IsotonicCalibrator
+from chickenstats_xg.v1.utils.finalize_utils import (
+    MAX_DEPTH_CAP,
+    _ECE_WEIGHT,
+    _STRUCTURAL_FLAW_WEIGHT,
+    calculate_ece,
+    compute_oof_predictions,
+    screen_trials,
+    select_top_trials,
+)
+from chickenstats_xg.v1.utils.transforms import apply_fixed_categoricals, logit
 
 set_style()
 
@@ -97,6 +103,14 @@ def model_metrics(y: pd.Series, y_pred: np.ndarray, y_pred_proba: np.ndarray) ->
     }
 
 
+def _importance_as_array(
+    booster: xgb.Booster, feature_names: list[str], importance_type: str = "weight"
+) -> np.ndarray:
+    """Convert booster importance dict to a numpy array aligned to feature_names order."""
+    score = booster.get_score(importance_type=importance_type)
+    return np.array([score.get(f, 0.0) for f in feature_names], dtype=float)
+
+
 def model_viz(
     model: xgb.XGBClassifier,
     X_train: pd.DataFrame,
@@ -107,78 +121,63 @@ def model_viz(
     base_margin: np.ndarray | None = None,
 ) -> dict[str, Figure | None]:
     """Generate all classifier charts via the utilities.charts module."""
-    y_pred = model.predict(X_test, base_margin=base_margin)
     y_prob = model.predict_proba(X_test, base_margin=base_margin)[:, 1]
-    return all_classifier_charts(
+    # Use base-rate threshold, not 0.5 — at 6% goal rate, model.predict() flags only ~0.3%
+    # of shots as goals (recall ≈ 6%), making classification/confusion charts uninformative.
+    # Base-rate threshold matches _run_cv_folds, _objective_body, and the HTML report.
+    base_rate = float(y_test.mean())
+    y_pred = (y_prob >= base_rate).astype(int)
+
+    feat_names = list(X_train.columns)
+    booster = model.get_booster()
+    # Gain-based: most informative for feature evaluation (which features provide new signal).
+    imp_gain   = _importance_as_array(booster, feat_names, importance_type="gain")
+    # Weight-based: shows which features are actually split on (logit_base_xg dominates here).
+    imp_weight = _importance_as_array(booster, feat_names, importance_type="weight")
+
+    from chickenstats_xg.utilities.charts import feature_importances as fi_chart
+    charts = all_classifier_charts(
         y_true=y_test.to_numpy(),
         y_pred=y_pred,
         y_proba=y_prob,
-        importances=model.feature_importances_,
-        feature_names=list(X_train.columns),
+        importances=imp_gain,
+        feature_names=feat_names,
         classes=["no goal", "goal"],
         title_prefix=run_name,
         figsize=FIGSIZE,
         dpi=DPI,
     )
+    charts["feature_importances_weight"] = fi_chart(
+        imp_weight, feat_names,
+        title=f"{run_name} — Feature Importances (weight/splits)",
+        relative=False, topn=10, figsize=FIGSIZE, dpi=DPI,
+    )
+    charts["relative_feature_importances_weight"] = fi_chart(
+        imp_weight, feat_names,
+        title=f"{run_name} — Relative Feature Importances (weight/splits)",
+        relative=True, topn=10, figsize=FIGSIZE, dpi=DPI,
+    )
+    return charts
 
 
 def log_viz(charts: dict[str, Figure | None]) -> None:
     """Log visualization figures from model_viz to MLflow."""
     mlflow_paths = {
-        "classification_report":       "viz/classification_report.png",
-        "roc_auc":                      "viz/roc_auc.png",
-        "precision_recall_curve":       "viz/precision_recall_curve.png",
-        "class_prediction_error":       "viz/class_prediction_error.png",
-        "confusion_matrix":             "viz/confusion_matrix.png",
-        "feature_importances":          "viz/feature_importance.png",
-        "relative_feature_importances": "viz/relative_feature_importance.png",
+        "classification_report":              "viz/classification_report.png",
+        "roc_auc":                            "viz/roc_auc.png",
+        "precision_recall_curve":             "viz/precision_recall_curve.png",
+        "class_prediction_error":             "viz/class_prediction_error.png",
+        "confusion_matrix":                   "viz/confusion_matrix.png",
+        "feature_importances":                "viz/feature_importance_gain.png",
+        "relative_feature_importances":       "viz/relative_feature_importance_gain.png",
+        "feature_importances_weight":         "viz/feature_importance_weight.png",
+        "relative_feature_importances_weight": "viz/relative_feature_importance_weight.png",
     }
     for key, path in mlflow_paths.items():
         fig = charts.get(key)
         if fig is not None:
             mlflow.log_figure(fig, path)
             plt.close(fig)
-
-
-# ── Calibrator ─────────────────────────────────────────────────────────────────
-
-class IsotonicCalibrator:
-    """Isotonic regression calibrator with a predict_proba interface.
-
-    Wraps sklearn IsotonicRegression as a drop-in replacement for LogisticRegression
-    (Platt) calibrators: same joblib serialization, same predict_proba(X)[:, 1] call
-    pattern. Use for states where Platt's sigmoid ceiling can't reach near-1.0 goal
-    rates (e.g. empty_against, ~99% actual rate in the top prediction decile).
-    """
-
-    def __init__(self) -> None:
-        self._iso = IsotonicRegression(out_of_bounds="clip")
-
-    def fit(self, X: np.ndarray, y: np.ndarray) -> "IsotonicCalibrator":
-        self._iso.fit(X.ravel(), y)
-        return self
-
-    def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        p = self._iso.predict(X.ravel())
-        return np.stack([1 - p, p], axis=1)
-
-
-# ── Feature helpers ─────────────────────────────────────────────────────────────
-
-def _apply_fixed_categoricals(X: pd.DataFrame, strength: str) -> pd.DataFrame:
-    """Cast categorical columns to pd.Categorical with fixed category lists."""
-    X = X.copy()
-    cat_map = {
-        "shot_type":        SHOT_TYPES,
-        "position":         POSITIONS,
-        "strength_state":   STRENGTH_STATE_CATS[strength],
-        "prior_event_same": PRIOR_EVENT_TYPES,
-        "prior_event_opp":  PRIOR_EVENT_TYPES,
-    }
-    for col, cats in cat_map.items():
-        if col in X.columns:
-            X[col] = pd.Categorical(X[col], categories=cats)
-    return X
 
 
 def _build_context_interaction_constraints(feat_cols: list[str]) -> list[list[str]]:
@@ -193,15 +192,6 @@ def _build_context_interaction_constraints(feat_cols: list[str]) -> list[list[st
         for group in CONTEXT_XG_INTERACTION_GROUPS
         if any(c in feat_set for c in group)
     ]
-
-
-_BM_EPS = 1e-7
-
-
-def _logit(p: np.ndarray) -> np.ndarray:
-    """Convert probability to log-odds, clipped to avoid ±inf."""
-    p = np.clip(p, _BM_EPS, 1 - _BM_EPS)
-    return np.log(p / (1 - p))
 
 
 # ── Data loading ────────────────────────────────────────────────────────────────
@@ -233,8 +223,8 @@ def load_data(
 
     # Chronological split: train through 2022-23, test on 2023-24
     train_mask = season <= 20222023
-    X_train = _apply_fixed_categoricals(X.loc[train_mask].reset_index(drop=True), strength)
-    X_test  = _apply_fixed_categoricals(X.loc[~train_mask].reset_index(drop=True), strength)
+    X_train = apply_fixed_categoricals(X.loc[train_mask].reset_index(drop=True), strength)
+    X_test  = apply_fixed_categoricals(X.loc[~train_mask].reset_index(drop=True), strength)
     y_train = y.loc[train_mask].reset_index(drop=True)
     y_test  = y.loc[~train_mask].reset_index(drop=True)
 
@@ -308,10 +298,13 @@ def _params_context_xg(
         "gamma":            trial.suggest_float("gamma", 1.0, 10.0),
         # Ceiling raised from 100 → 200: EA production lambda was 95.62 (hit the ceiling).
         # Optimal EA regularization may require lambda > 100 for the ~9K-event dataset.
-        "lambda":           trial.suggest_float("lambda", 1.0, 200.0, log=True),
+        # Floor raised from 1.0 → 10.0: passing models all had lambda ≥ 8.5 (PP minimum).
+        # lambda < 10 produces bimodal output even with mds=1 — flag groups accumulate
+        # enough positive weight across iterations to push ~10% of shots to p≈0.60.
+        "lambda":           trial.suggest_float("lambda", 10.0, 200.0, log=True),
         "alpha":            trial.suggest_float("alpha", 0.1, 10.0, log=True),
         "subsample":        trial.suggest_float("subsample", 0.5, 1.0, step=0.05),
-        "learning_rate":    trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+        "learning_rate":    trial.suggest_float("learning_rate", 0.01, 0.30, log=True),
         # max_delta_step=1 is fixed — not tunable. mds >= 2 causes bimodal cliff regardless
         # of other params. Fixed here so CV folds match the final model in finalize.py.
         "max_delta_step":   1,
@@ -420,8 +413,8 @@ def _objective_body(
     #   stays in the feature matrix so interaction constraint groups remain intact.
     # base_xg: no base_margin.
     if data.model == "pred_goal" and "base_xg" in data.X_train.columns:
-        bm_train = _logit(data.X_train["base_xg"].to_numpy())
-        bm_test  = _logit(data.X_test["base_xg"].to_numpy())
+        bm_train = logit(data.X_train["base_xg"].to_numpy())
+        bm_test  = logit(data.X_test["base_xg"].to_numpy())
         X_train  = data.X_train.drop(columns=["base_xg"])
         X_test   = data.X_test.drop(columns=["base_xg"])
     elif data.model == "context_xg" and "logit_base_xg" in data.X_train.columns:
@@ -502,13 +495,31 @@ def _objective_body(
     for i in range(0, len(boosting_metrics), 1000):
         client.log_batch(current_run.info.run_id, metrics=boosting_metrics[i: i + 1000])
 
-    mlflow.log_dict(model.get_booster().get_fscore(), "artifacts/feature_importance.json")
+    booster    = model.get_booster()
+    feat_names = list(X_train.columns)
+    fi_weight  = booster.get_score(importance_type="weight")
+    fi_gain    = booster.get_score(importance_type="gain")
+    mlflow.log_dict(fi_weight, "artifacts/feature_importance_weight.json")
+    mlflow.log_dict(fi_gain,   "artifacts/feature_importance_gain.json")
+    fi_df = (
+        pd.DataFrame({
+            "feature":         feat_names,
+            "weight (splits)": [fi_weight.get(f, 0) for f in feat_names],
+            "gain (avg)":      [round(fi_gain.get(f, 0.0), 4) for f in feat_names],
+        })
+        .query("`weight (splits)` > 0")
+        .sort_values("weight (splits)", ascending=False)
+        .reset_index(drop=True)
+    )
+    mlflow.log_text(
+        fi_df.to_html(index=False, float_format=lambda x: f"{x:.4f}"),
+        "artifacts/feature_importance.html",
+    )
 
-    y_preds = model.predict(X_test, base_margin=bm_test)
     y_probs = model.predict_proba(X_test, base_margin=bm_test)[:, 1]
     # Base-rate threshold for threshold-dependent metrics — see _run_cv_folds for rationale.
     y_preds_br = (y_probs >= float(data.y_test.mean())).astype(int)
-    degenerate = len(np.unique(y_preds)) < 2
+    degenerate = len(np.unique(y_preds_br)) < 2
 
     test_metrics = {f"test_{k}": float(v) for k, v in model_metrics(data.y_test, y_preds_br, y_probs).items()}
     mlflow.log_metrics(test_metrics)
@@ -520,7 +531,7 @@ def _objective_body(
     # Upload model artifact only for trials above the performance cutoff — uploading
     # every trial exhausts file descriptors after hundreds of runs.
     run_name = current_run.info.run_name
-    signature = infer_signature(X_test, y_preds)
+    signature = infer_signature(X_test, y_preds_br)
     logged_model = None
     if not degenerate and performance_tag in ("medium", "high", "very high"):
         model_info = mlflow.xgboost.log_model(
@@ -550,10 +561,87 @@ def _objective_body(
         "performance/test_classification_report.html",
     )
 
+    goals_mask = data.y_test.to_numpy() == 1
+    shots_mask = ~goals_mask
+    pct_labels = [5, 10, 25, 50, 75, 90, 95]
+    pred_dist_df = pd.DataFrame({
+        "percentile": pct_labels,
+        "all_shots":  np.percentile(y_probs, pct_labels).round(4),
+        "goals":      np.percentile(y_probs[goals_mask], pct_labels).round(4) if goals_mask.sum() > 0 else [float("nan")] * len(pct_labels),
+        "non_goals":  np.percentile(y_probs[shots_mask], pct_labels).round(4) if shots_mask.sum() > 0 else [float("nan")] * len(pct_labels),
+    })
+    mlflow.log_text(pred_dist_df.to_html(index=False), "artifacts/prediction_distribution.html")
+
     if not degenerate and performance_tag in ("medium", "high", "very high"):
         log_viz(model_viz(model, X_train, data.y_train, X_test, data.y_test, run_name, base_margin=bm_test))
 
     mlflow.set_tag("trial_outcome", "completed")
+
+    # context_xg objective: composite score (same formula as screen_trials) so Optuna
+    # gets a calibration signal and actively steers toward well-regularised configs.
+    # base_xg and pred_goal use raw hold-out PR-AUC — no bimodal cliff risk there.
+    if data.model == "context_xg":
+        y_np = data.y_test.to_numpy()
+        platt = LogisticRegression(C=1.0, max_iter=1000).fit(y_probs.reshape(-1, 1), y_np)
+        prob_platt = platt.predict_proba(y_probs.reshape(-1, 1))[:, 1]
+        cal_prauc = float(average_precision_score(y_np, prob_platt))
+        cal_ll    = float(sklearn_log_loss(y_np, prob_platt))
+        ece       = calculate_ece(y_np, prob_platt)
+        iso = IsotonicRegression(out_of_bounds="clip").fit(y_probs, y_np)
+        prob_iso  = np.clip(iso.predict(y_probs), 1e-7, 1 - 1e-7)
+        iso_ll    = float(sklearn_log_loss(y_np, prob_iso))
+        structural_flaw_penalty = max(0.0, cal_ll - iso_ll)
+
+        bin_edges = np.percentile(y_probs, np.linspace(0, 100, 11))
+        bin_edges[0] -= 1e-9
+        bin_ids = np.clip(np.digitize(y_probs, bin_edges) - 1, 0, 9)
+        cal_rows = []
+        for b in range(10):
+            mask = bin_ids == b
+            if not mask.any():
+                continue
+            cal_rows.append({
+                "decile":      b + 1,
+                "n":           int(mask.sum()),
+                "actual_rate": round(float(y_np[mask].mean()), 4),
+                "raw_prob":    round(float(y_probs[mask].mean()), 4),
+                "platt_prob":  round(float(prob_platt[mask].mean()), 4),
+                "iso_prob":    round(float(prob_iso[mask].mean()), 4),
+                "raw_p10":     round(float(np.percentile(y_probs[mask], 10)), 4),
+                "raw_p90":     round(float(np.percentile(y_probs[mask], 90)), 4),
+            })
+        mlflow.log_text(
+            pd.DataFrame(cal_rows).to_html(index=False),
+            "artifacts/calibration_deciles.html",
+        )
+
+        # Distribution penalty on raw probs — catches asymmetric bimodal that Platt masks.
+        # SHOT p90 / base_rate > 2.5 means non-goal shots are reaching high-probability territory.
+        # Weight 0.02: at ratio=10.73 (bimodal ES), penalty=0.165; at ratio=1.79 (passing ES), 0.
+        # Gap of ~0.30 composite points is unambiguous signal for TPE.
+        shot_mask = y_np == 0
+        base_rate = float(y_np.mean())
+        if shot_mask.sum() > 0 and base_rate > 0:
+            shot_p90 = float(np.quantile(y_probs[shot_mask], 0.90))
+            dist_ratio = shot_p90 / base_rate
+        else:
+            shot_p90 = 0.0
+            dist_ratio = 0.0
+        distribution_penalty = max(0.0, dist_ratio - 2.5) * 0.02
+
+        composite = cal_prauc - (_ECE_WEIGHT * ece) - (_STRUCTURAL_FLAW_WEIGHT * structural_flaw_penalty) - distribution_penalty
+        mlflow.log_metrics({
+            "objective_cal_prauc":             cal_prauc,
+            "objective_ece":                   ece,
+            "objective_platt_ll":              cal_ll,
+            "objective_iso_ll":               iso_ll,
+            "objective_structural_penalty":    structural_flaw_penalty,
+            "objective_distribution_ratio":    dist_ratio,
+            "objective_distribution_penalty":  distribution_penalty,
+            "objective_composite":             composite,
+        })
+        return composite
+
     return prauc
 
 
@@ -566,6 +654,7 @@ def tune_model(
     max_trials: int,
     run: str | None = None,
     model: str = "base_xg",
+    n_startup_trials: int = 100,
 ) -> optuna.Study:
     """Create (or resume) an Optuna study and run Optuna + MLflow tuning."""
     model_suffix = model.replace("_xg", "")
@@ -609,7 +698,7 @@ def tune_model(
         strength=strength,
     )
 
-    sampler = optuna.samplers.TPESampler(multivariate=True, seed=SEED)
+    sampler = optuna.samplers.TPESampler(multivariate=True, seed=SEED, n_startup_trials=n_startup_trials)
     try:
         study = optuna.create_study(
             study_name=study_name,
@@ -647,20 +736,7 @@ def tune_model(
     return study
 
 
-# ── Shared finalize utilities ───────────────────────────────────────────────────
-
-# Trials with max_depth > this cap are excluded from finalize selection — deep trees
-# overfit to GOAL event feature patterns, producing near-1.0 predictions with minimal
-# PR-AUC gain (< 0.5% relative vs max_depth ≤ 6).
-MAX_DEPTH_CAP = 6
-
-# Composite score weights for screen_trials():
-#   composite = cal_prauc − (_ECE_WEIGHT × ece) − (_STRUCTURAL_FLAW_WEIGHT × structural_flaw_penalty)
-# ECE penalty: 1.5 deducts ~0.015 PR-AUC points per 1% absolute calibration error.
-# Structural flaw penalty: 2.0 heavily discounts models where Isotonic >> Platt (bimodal signal).
-_ECE_WEIGHT = 1.5
-_STRUCTURAL_FLAW_WEIGHT = 2.0
-
+# ── CLI ─────────────────────────────────────────────────────────────────────────
 
 def load_optuna_storage() -> optuna.storages.RDBStorage:
     """Create an RDBStorage from DB_* environment variables."""
@@ -673,231 +749,6 @@ def load_optuna_storage() -> optuna.storages.RDBStorage:
     )
 
 
-def select_top_trials(
-    study: optuna.Study,
-    n: int,
-    max_depth_cap: int | None = None,
-) -> list[tuple[dict, int, optuna.Trial]]:
-    """Return top N completed trials by CV PR-AUC as (params, trial_num, trial) triples.
-
-    If max_depth_cap is given, trials with max_depth > cap are excluded (fallback to all
-    completed if no shallow trials exist).
-    """
-    all_completed = [
-        t for t in study.trials
-        if t.state == optuna.trial.TrialState.COMPLETE and t.value is not None
-    ]
-    if not all_completed:
-        raise RuntimeError("No completed trials in study — run experiments.py first.")
-    if max_depth_cap is not None:
-        shallow = [t for t in all_completed if t.params.get("max_depth", 0) <= max_depth_cap]
-        pool = shallow if shallow else all_completed
-    else:
-        pool = all_completed
-    top = sorted(pool, key=lambda t: t.value, reverse=True)[:n]
-    return [(t.params, t.number, t) for t in top]
-
-
-def calculate_ece(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> float:
-    """Expected Calibration Error using quantile bins.
-
-    Quantile bins put equal weight on each probability decile rather than equal-width
-    probability intervals — better for skewed distributions like hockey xG where most
-    predictions cluster near the base goal rate (~10%).
-    """
-    bin_edges = np.percentile(y_prob, np.linspace(0, 100, n_bins + 1))
-    bin_ids = np.digitize(y_prob, bin_edges[1:-1])
-    ece = 0.0
-    for i in range(n_bins):
-        mask = bin_ids == i
-        if np.any(mask):
-            ece += (np.sum(mask) / len(y_prob)) * abs(float(np.mean(y_prob[mask])) - float(np.mean(y_true[mask])))
-    return ece
-
-
-def screen_trials(
-    candidates: list[tuple[dict, int, optuna.Trial]],
-    fixed_params: dict,
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    X_hold_out: pd.DataFrame,
-    y_hold_out: pd.Series,
-    bm_train: np.ndarray | None = None,
-    bm_hold_out: np.ndarray | None = None,
-    max_depth_cap: int | None = None,
-) -> tuple[dict, int, optuna.Trial]:
-    """Retrain each candidate and select best by composite score. Returns (params, trial_num, trial).
-
-    Composite score = cal_prauc − (_ECE_WEIGHT × ece) − (_STRUCTURAL_FLAW_WEIGHT × structural_flaw_penalty)
-
-    structural_flaw_penalty = max(0, platt_ll − iso_ll): Platt (linear log-odds transform) cannot
-    fix bimodal raw probabilities; IsotonicRegression (monotone step function) can. A large gap
-    means the raw distribution is structurally flawed, not merely shifted. This replaces the old
-    null_ll × threshold hard cutoff, eliminating the catastrophic fallback when all candidates fail.
-    """
-    y_np = y_hold_out.to_numpy()
-    print(f"    screening {len(candidates)} candidates using composite scoring...")
-
-    results: list[tuple[int, dict, float, float, float, optuna.Trial]] = []
-    for trial_params, trial_num, trial_obj in candidates:
-        screen_params = {**fixed_params, **trial_params}
-        if max_depth_cap is not None:
-            screen_params["max_depth"] = min(screen_params.get("max_depth", max_depth_cap), max_depth_cap)
-        model = xgb.XGBClassifier(**screen_params)
-        model.fit(
-            X_train, y_train,
-            eval_set=[(X_hold_out, y_hold_out)],
-            base_margin=bm_train,
-            base_margin_eval_set=[bm_hold_out] if bm_hold_out is not None else None,
-            verbose=False,
-        )
-        raw = model.predict_proba(X_hold_out, base_margin=bm_hold_out)[:, 1]
-
-        # Platt calibration — linear log-odds transform, sigmoid ceiling prevents 1.0 outputs.
-        platt = LogisticRegression(C=1.0, max_iter=1000).fit(raw.reshape(-1, 1), y_np)
-        prob_platt = platt.predict_proba(raw.reshape(-1, 1))[:, 1]
-        cal_prauc = float(average_precision_score(y_np, prob_platt))
-        cal_ll    = float(sklearn_log_loss(y_np, prob_platt))
-        ece       = calculate_ece(y_np, prob_platt)
-
-        # Isotonic regression — monotone step function, can reach 0/1 → clip before log_loss.
-        iso = IsotonicRegression(out_of_bounds="clip").fit(raw, y_np)
-        prob_iso = np.clip(iso.predict(raw), 1e-7, 1 - 1e-7)
-        iso_ll   = float(sklearn_log_loss(y_np, prob_iso))
-
-        # Structural flaw penalty: how much better Isotonic is than Platt at log loss.
-        # A large gap means the raw distribution is bimodal or non-monotone — uncorrectable by Platt.
-        structural_flaw_penalty = max(0.0, cal_ll - iso_ll)
-
-        composite = cal_prauc - (_ECE_WEIGHT * ece) - (_STRUCTURAL_FLAW_WEIGHT * structural_flaw_penalty)
-        print(
-            f"    trial {trial_num:4d}: composite={composite:+.4f} | "
-            f"PR={cal_prauc:.4f}  ECE={ece:.4f}  Platt_LL={cal_ll:.4f}  Iso_LL={iso_ll:.4f}  penalty={structural_flaw_penalty:.4f}"
-        )
-        results.append((trial_num, trial_params, composite, cal_prauc, ece, trial_obj))
-
-    results.sort(key=lambda x: x[2], reverse=True)
-    best = results[0]
-    print(f"    → Selected trial {best[0]} (composite={best[2]:+.4f}, cal_prauc={best[3]:.4f}, ECE={best[4]:.4f})")
-    return best[1], best[0], best[5]
-
-
-def compute_oof_predictions(
-    model: xgb.XGBClassifier,
-    X_train: pd.DataFrame,
-    y_train: pd.Series,
-    params: dict,
-    n_splits: int,
-    bm_train: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Run TimeSeriesSplit OOF predictions, returning (oof_prob, oof_mask).
-
-    Fold models are pinned to model.best_iteration so the OOF probability scale
-    matches the early-stopped final model.
-    """
-    best_iter = model.best_iteration or N_ESTIMATORS
-    kfold = TimeSeriesSplit(n_splits=n_splits)
-    oof_prob = np.zeros(len(y_train))
-    oof_mask = np.zeros(len(y_train), dtype=bool)
-    fold_params = {k: v for k, v in params.items() if k not in ("eval_metric", "early_stopping_rounds")}
-    fold_params["n_estimators"] = best_iter
-    for tr_idx, val_idx in kfold.split(X_train):
-        bm_tr  = bm_train[tr_idx]  if bm_train is not None else None
-        bm_val = bm_train[val_idx] if bm_train is not None else None
-        fold_m = xgb.XGBClassifier(**fold_params)
-        fold_m.fit(X_train.iloc[tr_idx], y_train.iloc[tr_idx], base_margin=bm_tr, verbose=False)
-        oof_prob[val_idx] = fold_m.predict_proba(X_train.iloc[val_idx], base_margin=bm_val)[:, 1]
-        oof_mask[val_idx] = True
-    return oof_prob, oof_mask
-
-
-def params_from_run_name(run_name: str, experiment_name: str, study: optuna.Study) -> tuple[dict, int]:
-    """Fetch Optuna trial params for a specific MLflow run name.
-
-    Looks up the run by name, reads the optuna_trial_num tag, then returns that trial's
-    params from Optuna directly (avoiding string type conversion from MLflow tags).
-    """
-    runs = mlflow.search_runs(
-        experiment_names=[experiment_name],
-        filter_string=f"tags.`mlflow.runName` = '{run_name}'",
-        max_results=1,
-    )
-    if runs.empty:
-        raise ValueError(f"No run named {run_name!r} found in MLflow experiment {experiment_name!r}")
-    trial_num_val = runs.iloc[0].get("tags.optuna_trial_num")
-    if trial_num_val is None or pd.isna(trial_num_val):
-        raise ValueError(f"Run {run_name!r} has no optuna_trial_num tag — is it a tuning child run?")
-    trial_num = int(trial_num_val)
-    trial = next((t for t in study.trials if t.number == trial_num), None)
-    if trial is None:
-        raise ValueError(f"Trial {trial_num} not found in Optuna study {study.study_name!r}")
-    return trial.params, trial_num
-
-
-def save_model_metadata(
-    models_dir: Path,
-    strength: str,
-    tier: str,
-    version: str,
-    study_name: str,
-    trial_num: int,
-    trial_value: float | None,
-    trial: optuna.Trial | None = None,
-) -> None:
-    """Write a .meta.json sidecar alongside the frozen model for provenance tracing.
-
-    Captures enough information to trace any .ubj back to its Optuna trial and
-    MLflow tuning run without querying the database.
-    """
-    try:
-        git_commit = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(Path(__file__).parent),
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
-    except Exception:
-        git_commit = "unknown"
-
-    tuning_run_id = trial.user_attrs.get("mlflow_run_id") if trial is not None else None
-
-    meta = {
-        "strength": strength,
-        "tier": tier,
-        "version": version,
-        "optuna_study_name": study_name,
-        "optuna_trial_number": trial_num,
-        "optuna_trial_value": round(trial_value, 6) if trial_value is not None else None,
-        "mlflow_tuning_run_id": tuning_run_id,
-        "git_commit": git_commit,
-        "finalized_at": datetime.now(timezone.utc).isoformat(),
-    }
-
-    strength_dir = models_dir / strength
-    strength_dir.mkdir(parents=True, exist_ok=True)
-    meta_path = strength_dir / "meta.json"
-    with open(meta_path, "w") as f:
-        json.dump(meta, f, indent=2)
-    print(f"  [{strength}] metadata → {meta_path}")
-
-
-def load_model_artifacts(
-    models_dir: Path, strength: str
-) -> tuple[xgb.XGBClassifier, Any]:
-    """Load frozen XGBoost model and calibrator for one strength state.
-
-    Expects models at models_dir/{strength}/model.ubj and calibrator.joblib.
-    Returns (model, calibrator). calibrator is None if the file doesn't exist.
-    """
-    strength_dir = models_dir / strength
-    model = xgb.XGBClassifier(enable_categorical=True)
-    model.load_model(str(strength_dir / "model.ubj"))
-    cal_path = strength_dir / "calibrator.joblib"
-    calibrator = joblib.load(cal_path) if cal_path.exists() else None
-    return model, calibrator
-
-
-# ── CLI ─────────────────────────────────────────────────────────────────────────
-
 def main():
     """Main function."""
     parser = argparse.ArgumentParser(prog="xG Training", description="Tune an xG model tier with Optuna + MLflow.")
@@ -906,6 +757,8 @@ def main():
     parser.add_argument("--model", "-m", type=str, required=False, default="base_xg", choices=MODELS)
     parser.add_argument("--run", "-r", type=str, required=False)
     parser.add_argument("--trials", "-t", type=int, required=False, default=100)
+    parser.add_argument("--startup-trials", "-st", type=int, required=False, default=100,
+                        help="Number of random startup trials before TPE model kicks in (default: 100).")
     parser.add_argument("--delete", "-d", action="store_true", help="Delete the Optuna study and exit.")
     args = parser.parse_args()
 
@@ -925,6 +778,7 @@ def main():
             max_trials=args.trials,
             run=args.run,
             model=args.model,
+            n_startup_trials=args.startup_trials,
         )
 
 if __name__ == "__main__":

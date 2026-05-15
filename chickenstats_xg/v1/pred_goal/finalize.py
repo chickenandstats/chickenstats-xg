@@ -27,7 +27,6 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import joblib
 import matplotlib.pyplot as plt
 import mlflow
 import mlflow.sklearn
@@ -54,19 +53,23 @@ from chickenstats_xg.v1.config import (
     STRENGTHS,
 )
 from chickenstats_xg.v1.experiments import (
-    IsotonicCalibrator,
-    MAX_DEPTH_CAP,
-    _apply_fixed_categoricals,
-    _logit,
-    compute_oof_predictions,
     load_optuna_storage,
     log_viz,
     model_metrics,
+)
+from chickenstats_xg.v1.utils.artifacts import (
     params_from_run_name,
+    save_model_artifacts,
     save_model_metadata,
+)
+from chickenstats_xg.v1.utils.finalize_utils import (
+    MAX_DEPTH_CAP,
+    compute_oof_predictions,
     screen_trials,
     select_top_trials,
 )
+from chickenstats_xg.v1.utils.calibration import IsotonicCalibrator
+from chickenstats_xg.v1.utils.transforms import apply_fixed_categoricals, logit
 from chickenstats_xg.utilities.charts import all_classifier_charts
 
 NON_FEATURE_COLS = ["goal", "season"] + PASSTHROUGH_COLS
@@ -81,11 +84,11 @@ def _split_df(df: pd.DataFrame, strength: str) -> tuple[pd.DataFrame, pd.Series,
     y = df["goal"].copy()
     bm: np.ndarray | None = None
     if "base_xg" in df.columns:
-        bm = _logit(df["base_xg"].to_numpy())
+        bm = logit(df["base_xg"].to_numpy())
     drop = [c for c in NON_FEATURE_COLS if c in df.columns]
     if "base_xg" in df.columns and "base_xg" not in drop:
         drop = drop + ["base_xg"]
-    X = _apply_fixed_categoricals(df.drop(columns=drop), strength)
+    X = apply_fixed_categoricals(df.drop(columns=drop), strength)
     return X, y, bm
 
 
@@ -183,18 +186,7 @@ def _finalize_one(
 
     models_dir = Path(__file__).parent.parent / "models" / "pred_goal"
     strength_dir = models_dir / strength
-    strength_dir.mkdir(parents=True, exist_ok=True)
-
-    joblib.dump(calibrator, strength_dir / "calibrator.joblib")
-    base_model.get_booster().save_model(str(strength_dir / "model.ubj"))
-
-    # Save OOF predictions for training shots so score.py can use unbiased estimates.
-    # Rows where oof_mask is False (earliest fold, never in validation) get NaN.
-    oof_cal = calibrator.predict_proba(oof_prob.reshape(-1, 1))[:, 1]
-    oof_df = train_df[["game_id", "event_idx"]].reset_index(drop=True).copy()
-    oof_df["pred_goal"] = np.where(oof_mask, oof_cal, np.nan)
-    oof_df.to_parquet(strength_dir / "oof.parquet", index=False)
-
+    save_model_artifacts(base_model, calibrator, strength_dir, train_df, oof_prob, oof_mask, "pred_goal", params=params)
     print(f"  [{strength}] saved → {strength_dir}/model.ubj + calibrator.joblib + oof.parquet")
 
     save_model_metadata(
