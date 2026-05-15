@@ -56,9 +56,11 @@ prep-pbp-rapm         = "chickenstats_xg.v1.rapm.prep_pbp:main"
 process-rapm-stints   = "chickenstats_xg.v1.rapm.process_stints:main"
 run-rapm         = "chickenstats_xg.v1.rapm.regressions:main"
 # mlflow
-log-model        = "chickenstats_xg.v1.log_model:main"
+log-model        = "chickenstats_xg.v1.utils.log_model:main"
 # utilities
 nuke-experiment  = "chickenstats_xg.nuke_experiment:main"
+upload-data      = "chickenstats_xg.utilities.upload_data:main"
+download-data    = "chickenstats_xg.utilities.download_data:main"
 
 [tool.uv.sources]
 chickenstats = { git = "https://github.com/chickenandstats/chickenstats.git", tag = "v1.7.9.29" }
