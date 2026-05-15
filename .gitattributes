@@ -1,2 +1,11 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Route all tracked binary files through Git LFS.
+# Files matched by .gitignore are unaffected regardless of these rules.
+
+# XGBoost model files
+*.ubj filter=lfs diff=lfs merge=lfs -text
+
+# scikit-learn calibrators
+*.joblib filter=lfs diff=lfs merge=lfs -text
+
+# All parquet files that survive .gitignore — stints, scored outputs, OOF predictions
+*.parquet filter=lfs diff=lfs merge=lfs -text

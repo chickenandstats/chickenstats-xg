@@ -1,0 +1,39 @@
+name: Bump version
+
+on:
+  workflow_dispatch:
+    inputs:
+      part:
+        description: "Version part to bump"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Bump version
+        run: uv version ${{ inputs.part }}
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          VERSION=$(uv version --short)
+          git commit -am "chore: bump version to ${VERSION}"
+          git tag "v${VERSION}"
+          git push
+          git push --tags
