@@ -119,8 +119,9 @@ def _finalize_one(
         "n_estimators": N_ESTIMATORS,
         "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
         "enable_categorical": True,
-        # logloss first for monitoring; aucpr last so XGBoost early stopping fires on PR-AUC
-        "eval_metric": ["logloss", "aucpr"],
+        # logloss last → early stopping on logloss (calibration criterion).
+        # Matches experiments.py: PR-AUC stopping caused bimodal collapse in context_xg.
+        "eval_metric": ["aucpr", "logloss"],
         "monotone_constraints": {
             col: direction for col, direction in MONOTONE_CONSTRAINTS.items() if col in X_train.columns
         },

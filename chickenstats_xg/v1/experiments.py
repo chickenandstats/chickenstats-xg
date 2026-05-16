@@ -432,7 +432,7 @@ def _objective_body(
     # causes bimodal collapse — especially for small-sample states (SH, EF, EA) where the
     # per-leaf hessian sum is small and lambda must do more work.
     # empty_against is fixed at 1.0 for all models (goal rate ~57-80% — no upweighting needed).
-    spw_cap = 3.0 if data.model == "context_xg" else 10.0
+    spw_cap = 3.0 if data.model in ("context_xg", "pred_goal") else 10.0
     spw_high = min(data.scale_pos_weight, spw_cap) if data.scale_pos_weight > 1.0 else 1.0
     spw = trial.suggest_float("scale_pos_weight", 1.0, spw_high) if spw_high > 1.0 else 1.0
 
