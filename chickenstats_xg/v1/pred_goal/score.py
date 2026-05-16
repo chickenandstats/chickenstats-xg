@@ -74,48 +74,54 @@ def _score_strengths(
     """
     frames: list[pd.DataFrame] = []
 
-    for strength in strengths:
-        model_path = models_dir / strength / "model.ubj"
-        cal_path = models_dir / strength / "calibrator.joblib"
-        oof_path = models_dir / strength / "oof.parquet"
+    with ChickenProgress(transient=True) as progress:
+        task = progress.add_task(f"Scoring {strengths[0]}...", total=len(strengths))
+        for strength in strengths:
+            progress.update(task, description=f"Scoring {strength}...", refresh=True)
 
-        if not model_path.exists() or not cal_path.exists():
-            print(f"  [{strength}] Missing model artifacts — run pred_goal/finalize.py first.")
-            continue
+            model_path = models_dir / strength / "model.ubj"
+            cal_path = models_dir / strength / "calibrator.joblib"
+            oof_path = models_dir / strength / "oof.parquet"
 
-        model = xgb.XGBClassifier(enable_categorical=True)
-        model.load_model(str(model_path))
-        calibrator = joblib.load(cal_path)
+            if not model_path.exists() or not cal_path.exists():
+                print(f"  [{strength}] Missing model artifacts — run pred_goal/finalize.py first.")
+                progress.update(task, advance=1, refresh=True)
+                continue
 
-        # --- Training shots: prefer OOF predictions ---
-        train_df = pd.read_parquet(pred_goal_dir / "train" / f"{strength}.parquet")
-        train_scores = train_df[["game_id", "event_idx", "base_xg"]].reset_index(drop=True).copy()
+            model = xgb.XGBClassifier(enable_categorical=True)
+            model.load_model(str(model_path))
+            calibrator = joblib.load(cal_path)
 
-        if oof_path.exists():
-            oof_df = pd.read_parquet(oof_path)
-            train_scores = train_scores.merge(oof_df, on=["game_id", "event_idx"], how="left")
-        else:
-            train_scores["pred_goal"] = np.nan
+            # --- Training shots: prefer OOF predictions ---
+            train_df = pd.read_parquet(pred_goal_dir / "train" / f"{strength}.parquet")
+            train_scores = train_df[["game_id", "event_idx", "base_xg"]].reset_index(drop=True).copy()
 
-        # Fallback for earliest-fold shots that were never in a validation set
-        no_oof = train_scores["pred_goal"].isna()
-        if no_oof.any():
-            fallback_df = train_df.iloc[np.where(no_oof.values)[0]].reset_index(drop=True)
-            train_scores.loc[no_oof.values, "pred_goal"] = _model_predict(model, calibrator, fallback_df, strength)
+            if oof_path.exists():
+                oof_df = pd.read_parquet(oof_path)
+                train_scores = train_scores.merge(oof_df, on=["game_id", "event_idx"], how="left")
+            else:
+                train_scores["pred_goal"] = np.nan
 
-        # --- Hold-out shots: final model is unbiased here ---
-        hold_df = pd.read_parquet(pred_goal_dir / "hold_out" / f"{strength}.parquet")
-        hold_scores = hold_df[["game_id", "event_idx", "base_xg"]].reset_index(drop=True).copy()
-        hold_scores["pred_goal"] = _model_predict(model, calibrator, hold_df, strength)
+            # Fallback for earliest-fold shots that were never in a validation set
+            no_oof = train_scores["pred_goal"].isna()
+            if no_oof.any():
+                fallback_df = train_df.iloc[np.where(no_oof.values)[0]].reset_index(drop=True)
+                train_scores.loc[no_oof.values, "pred_goal"] = _model_predict(model, calibrator, fallback_df, strength)
 
-        combined = pd.concat(
-            [train_scores[["game_id", "event_idx", "base_xg", "pred_goal"]],
-             hold_scores[["game_id", "event_idx", "base_xg", "pred_goal"]]],
-            ignore_index=True,
-        )
-        frames.append(combined)
-        n_oof = (~no_oof).sum()
-        print(f"  [{strength}] {len(train_df):,} train ({n_oof:,} OOF) + {len(hold_df):,} hold-out scored.")
+            # --- Hold-out shots: final model is unbiased here ---
+            hold_df = pd.read_parquet(pred_goal_dir / "hold_out" / f"{strength}.parquet")
+            hold_scores = hold_df[["game_id", "event_idx", "base_xg"]].reset_index(drop=True).copy()
+            hold_scores["pred_goal"] = _model_predict(model, calibrator, hold_df, strength)
+
+            combined = pd.concat(
+                [train_scores[["game_id", "event_idx", "base_xg", "pred_goal"]],
+                 hold_scores[["game_id", "event_idx", "base_xg", "pred_goal"]]],
+                ignore_index=True,
+            )
+            frames.append(combined)
+            progress.update(task, advance=1, refresh=True)
+
+        progress.update(task, description="Finished scoring all strength states", refresh=True)
 
     if not frames:
         raise RuntimeError("No strengths scored — check model artifacts in models/pred_goal/.")
@@ -142,9 +148,7 @@ def main() -> None:
     scored_dir = pred_goal_dir / "scored"
     scored_dir.mkdir(parents=True, exist_ok=True)
 
-    print("Scoring pred_goal across all strength states...")
     xg_map = _score_strengths(pred_goal_dir, models_dir, STRENGTHS)
-    print(f"  xg_map: {len(xg_map):,} fenwick events mapped.")
 
     available = sorted(raw_dir.glob("pbp_*.parquet"))
     if args.years:
@@ -153,9 +157,8 @@ def main() -> None:
         print(f"No raw PBP parquets found in {raw_dir}.")
         return
 
-    print(f"Joining onto {len(available)} raw PBP file(s)...")
-    with ChickenProgress(speed_estimate_period=300, transient=True) as progress:
-        task: TaskID = progress.add_task("Writing scored PBP...", total=len(available))
+    with ChickenProgress(speed_estimate_period=300) as progress:
+        task: TaskID = progress.add_task(f"Joining {available[0].stem}...", total=len(available))
         for path in available:
             progress.update(task, description=f"Joining {path.stem}...", refresh=True)
             raw = pd.read_parquet(path)
@@ -166,9 +169,7 @@ def main() -> None:
             out_path = scored_dir / path.name
             scored.to_parquet(out_path, index=False)
             progress.update(task, advance=1, refresh=True)
-            print(f"  {path.stem}: {len(raw):,} rows → {out_path.name}")
-
-    print("Done.")
+        progress.update(task, description="Finished writing scored PBP", refresh=True)
 
 
 if __name__ == "__main__":

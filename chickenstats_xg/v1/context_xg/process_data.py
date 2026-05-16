@@ -44,7 +44,6 @@ def process_strength(strength: str, scored_dir: Path, out_dir: Path) -> None:
     df = df.select(keep)
 
     write_train_holdout_split(df, out_dir / "train", out_dir / "hold_out", strength)
-    print(f"  [{strength}] done → {out_dir}/train/{strength}.parquet + hold_out/{strength}.parquet")
 
 
 def main() -> None:
@@ -59,11 +58,12 @@ def main() -> None:
 
     targets = [args.strength] if args.strength else STRENGTHS
     with ChickenProgress() as progress:
-        task = progress.add_task("Processing context_xg data...", total=len(targets))
+        task = progress.add_task(f"Processing {targets[0]}...", total=len(targets))
         for strength in targets:
-            progress.update(task, description=f"Processing {strength}...")
+            progress.update(task, description=f"Processing {strength}...", refresh=True)
             process_strength(strength, scored_dir, out_dir)
-            progress.update(task, advance=1)
+            progress.update(task, advance=1, refresh=True)
+        progress.update(task, description="Finished processing context_xg data", refresh=True)
 
 
 if __name__ == "__main__":

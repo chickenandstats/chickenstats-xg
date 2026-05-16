@@ -87,18 +87,14 @@ def main() -> None:
         print("No raw PBP files found for the requested years.")
         return
 
-    print("Loading scored base_xg...")
-    scored_xg = load_scored_xg(scored_dir)
-    print(f"  {len(scored_xg):,} scored fenwick events loaded.")
-
     with ChickenProgress(speed_estimate_period=300) as progress:
-        task: TaskID = progress.add_task("Enriching PBP files...", total=len(pbp_files))
+        task: TaskID = progress.add_task("Loading scored base_xg...", total=len(pbp_files))
+        scored_xg = load_scored_xg(scored_dir)
         for pbp_file in pbp_files:
             progress.update(task, description=f"Enriching {pbp_file.stem}...", refresh=True)
             enrich_year(pbp_file, scored_xg, out_dir)
             progress.update(task, advance=1, refresh=True)
-
-    print(f"Done. {len(pbp_files)} file(s) written to {out_dir}")
+        progress.update(task, description=f"Finished enriching {len(pbp_files)} PBP files", refresh=True)
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ from rich.progress import track
 
 from chickenstats.utilities import ChickenProgressIndeterminate
 
-from compute_rolling_stats import compute_rolling_stats
+from chickenstats_xg.v1.pred_goal.compute_rolling_stats import compute_rolling_stats
 from chickenstats_xg.v1.config import BASE_XG_FEATURE_COLUMNS, CONTEXT_XG_FEATURE_COLUMNS
 from chickenstats_xg.v1.utils.data_splitting import write_train_holdout_split
 

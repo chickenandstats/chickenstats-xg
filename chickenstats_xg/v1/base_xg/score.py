@@ -131,7 +131,6 @@ def score_strength(
 
     scored_dir.mkdir(parents=True, exist_ok=True)
     df.to_parquet(scored_dir / f"{strength}.parquet", index=False)
-    print(f"  [{strength}] {len(df):,} shots scored → {scored_dir / f'{strength}.parquet'}")
 
 
 
@@ -158,14 +157,16 @@ def main() -> None:
     strength_arg_map: dict[str, _StrengthArg] = {name: arg for name, arg in STRENGTH_FILE_ARGS}
     targets = STRENGTH_FILE_ARGS if args.all else [(args.strength, strength_arg_map[args.strength])]
 
-    print(f"Scoring {len(targets)} strength state(s)..." + (f" (years: {args.years})" if args.years else ""))
-    for strength, strength_arg in targets:
-        score_strength(strength, strength_arg, raw_dir, models_dir, scored_dir, args.years)
+    with ChickenProgress() as progress:
+        task = progress.add_task(f"Scoring {targets[0][0]}...", total=len(targets))
+        for strength, strength_arg in targets:
+            progress.update(task, description=f"Scoring {strength}...", refresh=True)
+            score_strength(strength, strength_arg, raw_dir, models_dir, scored_dir, args.years)
+            progress.update(task, advance=1, refresh=True)
+        progress.update(task, description="Finished scoring all strength states", refresh=True)
 
     if args.all and not args.no_rapm:
         prep_rapm(raw_dir, scored_dir, "base_xg", args.years)
-
-    print("Done.")
 
 
 if __name__ == "__main__":

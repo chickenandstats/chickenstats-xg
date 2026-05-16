@@ -21,13 +21,12 @@ Usage:
 import argparse
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
-import xgboost as xgb
 from chickenstats.utilities import ChickenProgress
 
 from chickenstats_xg.v1.config import CONTEXT_XG_FEATURE_COLUMNS, STRENGTHS
+from chickenstats_xg.v1.utils.artifacts import load_model_artifacts
 from chickenstats_xg.v1.utils.transforms import apply_fixed_categoricals, logit
 from chickenstats_xg.v1.utils.rapm import prep_rapm
 from chickenstats_xg.v1.utils.scoring import apply_oof_predictions
@@ -60,16 +59,11 @@ def score_strength(
     X = df[feat_cols].copy()
     X = apply_fixed_categoricals(X, strength)
 
-    booster = xgb.Booster()
-    booster.load_model(str(model_path))
-    dmat = xgb.DMatrix(X, enable_categorical=True, base_margin=logit_bm)
-    raw_probs = 1 / (1 + np.exp(-booster.predict(dmat)))
-
-    cal_path = models_dir / strength / "calibrator.joblib"
-    calibrator = joblib.load(cal_path) if cal_path.exists() else None
+    model, calibrator = load_model_artifacts(models_dir, strength)
     if calibrator is None:
         print(f"  [{strength}] WARNING: no calibrator found — context_xg will be uncalibrated.")
 
+    raw_probs = model.predict_proba(X, base_margin=logit_bm)[:, 1]
     context_xg = calibrator.predict_proba(raw_probs.reshape(-1, 1))[:, 1] if calibrator else raw_probs
 
     df = (
@@ -83,7 +77,6 @@ def score_strength(
 
     scored_dir.mkdir(parents=True, exist_ok=True)
     df.to_parquet(scored_dir / f"{strength}.parquet", index=False)
-    print(f"  [{strength}] {len(df):,} shots scored → {scored_dir / f'{strength}.parquet'}")
     return True
 
 
@@ -107,11 +100,12 @@ def main() -> None:
     targets = STRENGTHS if args.all else [args.strength]
     scored_count = 0
     with ChickenProgress() as progress:
-        task = progress.add_task("Scoring context_xg...", total=len(targets))
+        task = progress.add_task(f"Scoring {targets[0]}...", total=len(targets))
         for strength in targets:
-            progress.update(task, description=f"Scoring {strength}...")
+            progress.update(task, description=f"Scoring {strength}...", refresh=True)
             scored_count += score_strength(strength, base_xg_scored_dir, models_dir, scored_dir)
-            progress.update(task, advance=1)
+            progress.update(task, advance=1, refresh=True)
+        progress.update(task, description="Finished scoring all strength states", refresh=True)
 
     if args.all and not args.no_rapm:
         if scored_count == 0:
@@ -119,8 +113,6 @@ def main() -> None:
         else:
             rapm_dir = base_dir / "data" / "rapm" / "pbp"
             prep_rapm(rapm_dir, scored_dir, "context_xg")
-
-    print("Done.")
 
 
 if __name__ == "__main__":

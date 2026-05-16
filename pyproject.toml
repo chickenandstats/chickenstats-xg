@@ -42,7 +42,7 @@ score-pred-xg       = "chickenstats_xg.v1.pred_goal.score:main"
 # process data
 process-base-xg     = "chickenstats_xg.v1.base_xg.process_data:main"
 process-context-xg  = "chickenstats_xg.v1.context_xg.process_data:main"
-process-pred-xg     = "chickenstats_xg.v1.pred_goal.process_data:main"
+process-pred-goal     = "chickenstats_xg.v1.pred_goal.process_data:main"
 # pipeline orchestration
 pipeline-base-xg    = "chickenstats_xg.v1.base_xg.run_pipeline:main"
 pipeline-context-xg = "chickenstats_xg.v1.context_xg.run_pipeline:main"
@@ -61,6 +61,9 @@ log-model        = "chickenstats_xg.v1.utils.log_model:main"
 nuke-experiment  = "chickenstats_xg.nuke_experiment:main"
 upload-data      = "chickenstats_xg.utilities.upload_data:main"
 download-data    = "chickenstats_xg.utilities.download_data:main"
+
+[tool.uv]
+link-mode = "copy"
 
 [tool.uv.sources]
 chickenstats = { git = "https://github.com/chickenandstats/chickenstats.git", tag = "v1.7.9.29" }

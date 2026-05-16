@@ -65,15 +65,11 @@ def prep_rapm(
         print(f"  [rapm] No PBP files found in {source_dir} — skipping RAPM prep.")
         return
 
-    print(f"  [rapm] Loading scored {pred_col} for RAPM enrichment...")
-    scored_xg = load_scored_xg(scored_dir, pred_col)
-    print(f"  [rapm] {len(scored_xg):,} scored fenwick events loaded.")
-
     with ChickenProgress(speed_estimate_period=300, transient=True) as progress:
-        task: TaskID = progress.add_task(f"Enriching RAPM PBP with {pred_col}...", total=len(pbp_files))
+        task: TaskID = progress.add_task(f"Loading scored {pred_col}...", total=len(pbp_files))
+        scored_xg = load_scored_xg(scored_dir, pred_col)
         for pbp_file in pbp_files:
             progress.update(task, description=f"Enriching {pbp_file.stem}...", refresh=True)
             enrich_rapm_year(pbp_file, scored_xg, out_dir, pred_col)
             progress.update(task, advance=1, refresh=True)
-
-    print(f"  [rapm] {len(pbp_files)} file(s) written to {out_dir}")
+        progress.update(task, description=f"Finished enriching RAPM PBP with {pred_col}", refresh=True)

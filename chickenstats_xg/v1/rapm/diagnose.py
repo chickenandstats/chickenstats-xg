@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr
 
-_BASE = _Path(__file__).parent.parent
+_BASE = Path(__file__).parent.parent
 RAPM_PATH = _BASE / "data" / "rapm" / "rapm_by_season.parquet"
 PRED_GOAL_TRAIN_DIR = _BASE / "data" / "pred_goal" / "train"
 
