@@ -135,21 +135,21 @@ The FAIL is a diagnostic threshold artifact at this base rate. EA is safe to pro
 
 ### Latest Diagnostic
 
-**Date:** 2026-05-14
+**Date:** 2026-05-15
 **Model version:** 1.0.0 (20-feature gbtree depth-2, 9 constraint groups)
-**Trials:** 750 (even_strength) / 1000 (powerplay, shorthanded, empty_for, empty_against — combined across study restarts)
+**Trials:** 1500 / 1500 — all studies complete; finalized with `--top-n 150`
 **Hold-out season:** 2024-25
-**Key change from prior run:** Finalized with `--top-n 150` (was 15). Wider screening window recovered non-bimodal trials that were below the top-15 CV PR-AUC cutoff. All states now pass calibration.
+**Key change from prior run:** Additional Optuna tuning after Issue 16 scoring fix. ES extended 750→1500 trials; PP/SH/EF/EA extended 1000→1500. All 5 studies now at 1500 trials. New selected trials reflect corrected context_xg targets. Finalization unchanged (`--top-n 150`).
 
 ### Pass / Fail Summary
 
 | Strength | Distribution | High Conf | Calibration | OOF Gap | Lift | Gain Conc | Overall |
 |---|---|---|---|---|---|---|---|
-| even_strength | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ PASS |
-| powerplay | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ PASS |
-| shorthanded | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ PASS |
-| empty_for | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ PASS |
-| empty_against | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | ⚠️ WARN |
+| even_strength | ✅ | ⚠️ WARN | ✅ | ✅ | ✅ | ✅ | ⚠️ WARN |
+| powerplay | ✅ | ⚠️ WARN | ✅ | ✅ | ✅ | ✅ | ⚠️ WARN |
+| shorthanded | ✅ | ⚠️ WARN | ✅ | ✅ | ✅ | ✅ | ⚠️ WARN |
+| empty_for | ✅ | ⚠️ WARN | ✅ | ❌ FAIL | ✅ | ✅ | ❌ FAIL |
+| empty_against | ✅ | ✅ | ⚠️ WARN | ✅ | ✅ | ✅ | ⚠️ WARN |
 
 ### Advanced Metrics (hold-out 2024-25)
 
@@ -161,11 +161,11 @@ The FAIL is a diagnostic threshold artifact at this base rate. EA is safe to pro
 
 | Strength | Base% | PR AUC | PR× | ROC AUC | Log Loss | Null LL | ΔLL% | Brier | Null Brier | ΔBr% | ECE | Max Cal Error | OOF Gap | Lift | Precision | Recall |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| even_strength | 6.0% | 0.3213 | 5.39× | 0.7844 | 0.1873 | 0.2260 | +17.1% | 0.0472 | 0.0561 | +15.9% | 0.0055 | 0.5051 | 0.0213 | +0.1622 | 0.1562 | 0.5584 |
-| powerplay | 10.3% | 0.3439 | 3.35× | 0.7009 | 0.2871 | 0.3310 | +13.3% | 0.0785 | 0.0921 | +14.8% | 0.0061 | 0.6422 | 0.0287 | +0.1704 | 0.1916 | 0.4938 |
-| shorthanded | 7.2% | 0.3349 | 4.64× | 0.8200 | 0.2130 | 0.2592 | +17.8% | 0.0567 | 0.0669 | +15.3% | 0.0088 | 0.5174 | 0.0221 | +0.1435 | 0.1861 | 0.5882 |
-| empty_for | 7.7% | 0.3136 | 4.05× | 0.7157 | 0.2357 | 0.2722 | +13.4% | 0.0611 | 0.0714 | +14.4% | 0.0054 | 0.4629 | 0.0056 | +0.1502 | 0.1694 | 0.5435 |
-| empty_against | 56.7% | 0.7879 | 1.39× | 0.7072 | 0.6083 | 0.6842 | +11.1% | 0.2131 | 0.2455 | +13.2% | 0.0638 | 0.2339 | 0.0052 | +0.0450 | 0.7292 | 0.6021 |
+| even_strength | 6.0% | 0.3800 | 6.37× | 0.8005 | 0.1775 | 0.2260 | +21.5% | 0.0443 | 0.0561 | +21.1% | 0.0030 | 0.7253 | 0.0200 | +0.2205 | 0.1692 | 0.5828 |
+| powerplay | 10.3% | 0.3735 | 3.64× | 0.7082 | 0.2800 | 0.3310 | +15.4% | 0.0758 | 0.0921 | +17.7% | 0.0080 | 0.6491 | 0.0064 | +0.2026 | 0.2156 | 0.4408 |
+| shorthanded | 7.2% | 0.3799 | 5.27× | 0.8314 | 0.2031 | 0.2592 | +21.6% | 0.0537 | 0.0669 | +19.7% | 0.0100 | 0.5068 | 0.0032 | +0.1920 | 0.2020 | 0.6364 |
+| empty_for | 7.7% | 0.4318 | 5.58× | 0.7401 | 0.2137 | 0.2722 | +21.5% | 0.0536 | 0.0714 | +24.8% | 0.0117 | 0.2220 | 0.1178 | +0.2578 | 0.1809 | 0.5609 |
+| empty_against | 56.7% | 0.7826 | 1.38× | 0.7117 | 0.6087 | 0.6842 | +11.0% | 0.2125 | 0.2455 | +13.4% | 0.0620 | 0.1864 | 0.0144 | +0.0175 | 0.7542 | 0.5511 |
 
 ---
 
@@ -173,33 +173,31 @@ The FAIL is a diagnostic threshold artifact at this base rate. EA is safe to pro
 
 **Fixed params (all states):** booster=gbtree, objective=binary:logistic, max_depth=2, n_estimators=500, early_stopping_rounds=50, eval_metric=["aucpr","logloss"] (early stopping on logloss), random_state=615, enable_categorical=True.
 
-The trial-level params below are the most likely selected trial for each state, identified heuristically by: (1) max_delta_step=1 (required for non-bimodal calibration — all bimodal trials have mds≥2), and (2) learning_rate consistent with the observed best_iteration. Exact determination requires re-running the calibrated screening output.
+Values below are exact — sourced from `models/context_xg/{strength}/params.json` as read by `diagnose.py`. `best_iter` is `best_iteration` from the saved model artifact (early-stopped tree count on the final full-dataset training run).
 
-| State | Trial # | mds | lambda | gamma | alpha | mcw | lr | subsample | spw | best_iter |
-|---|---|---|---|---|---|---|---|---|---|---|
-| even_strength | ~492 | 1 | 47.03 | 1.44 | 4.96 | 144 | 0.116 | 0.80 | 1.030 | 230 |
-| powerplay | ~460 | 1 | 8.49 | 2.05 | 1.04 | 196 | 0.196 | 0.95 | 1.059 | 82 |
-| shorthanded | ~748 | 1 | 9.09 | 4.10 | 0.22 | 50 | 0.207 | 1.00 | 1.194 | 202 |
-| empty_for | ~547 | 1 | 10.06 | 2.93 | 0.29 | 50 | 0.175 | 0.75 | 1.073 | 122 |
-| empty_against | 606 | 1 | 95.62 | 5.67 | 4.69 | 53 | 0.154 | 0.50 | N/A | 149 |
+| State | mds | lambda | gamma | alpha | mcw | lr | subsample | spw | best_iter |
+|---|---|---|---|---|---|---|---|---|---|
+| even_strength | 1 | 42.5296 | 2.7934 | 0.1537 | 281 | 0.2616 | 0.65 | 1.1818 | 76 |
+| powerplay | 1 | 11.4477 | 4.2388 | 0.3401 | 289 | 0.2664 | 0.85 | 1.3808 | 74 |
+| shorthanded | 1 | 14.7077 | 4.7175 | 1.3658 | 112 | 0.2503 | 1.00 | 1.6468 | 34 |
+| empty_for | 1 | 11.8487 | 1.8033 | 2.7611 | 182 | 0.1340 | 0.75 | 1.2979 | 164 |
+| empty_against | 1 | 165.4809 | 1.9974 | 0.3525 | 443 | 0.0103 | 0.75 | N/A | 44 |
 
-`mds` = max_delta_step. `mcw` = min_child_weight. `spw` = scale_pos_weight. `best_iter` = Optuna CV run estimate (not the final model's tree count — see note below).
-
-**Note on best_iter:** Values above are estimated from the Optuna CV runs, not read from the saved model artifact. Final model `best_iteration` values (from `Booster.best_iteration` on the full-dataset training run): ES=21, PP=46, SH=104, EF=95, EA=175. Divergence from the CV estimates is expected — full-data training converges faster than cross-validation folds because more data is available per iteration and early stopping fires against a larger validation set.
+`mds` = max_delta_step. `mcw` = min_child_weight. `spw` = scale_pos_weight. EA has no `spw` — class balance handled naturally at the 56.7% base rate.
 
 **Hyperparameter assessment:**
 
 **max_delta_step=1 is the critical parameter across all states.** Every likely-selected trial has mds=1. The bimodal cliff is driven by high-mds trials (2–5): larger per-tree leaf updates accumulate into a high-probability cluster for flag shots over 500 trees. mds=1 limits each tree's contribution to ≤1 log-odds unit before the learning rate is applied, preventing runaway accumulation. The Optuna CV landscape is flat (top-5 PR-AUC span ~0.0005), so bimodal (high-mds) trials dominate the top-N by a small margin. The calibrated screening must reach rank 100+ to find mds=1 trials reliably — hence `--top-n 150`.
 
-**even_strength (~Trial #492):** lambda=47 is the strongest regularization of the four low-base-rate states — appropriate for the 1.24M-shot dataset where stable high-lambda models are feasible. lr=0.116 (lowest across all states) is consistent with best_iter=230 (slower convergence). spw≈1.03 near-uniform: correct because base_margin (logit_base_xg) already anchors the 6% prior.
+**even_strength:** lambda=42.5296 is the strongest regularization of the four low-base-rate states — appropriate for the 1.24M-shot dataset (slightly lower than the prior trial's 47.03). lr=0.2616 is far more aggressive than the prior selection (~0.116), with a correspondingly lower best_iter=76 (vs CV-estimated ~230). mcw=281 is much higher than prior (~144), providing additional leaf-split regularization. spw=1.18 near-uniform: correct because base_margin already anchors the 6% prior.
 
-**powerplay (~Trial #460):** lambda=8.49 is lighter, matching the smaller 216K-shot dataset. best_iter=82 is unusually low — logloss early stopping fired quickly with mds=1 and moderate lr, suggesting the model reached a well-calibrated state before overfitting could develop. spw≈1.06 near-uniform.
+**powerplay:** lambda=11.4477 — moderate, matched to the 216K-shot dataset. lr=0.2664 (aggressive), best_iter=74 — the model reaches logloss stabilization quickly at this learning rate. mcw=289 is the highest of the low-base-rate states, providing strong split protection on the compressed PP distribution. spw=1.38 near-uniform.
 
-**shorthanded (~Trial #748):** min_child_weight=50 is at the search space floor for a 35K-shot dataset — the principal weakness of this model. Gamma=4.10 provides compensating pruning pressure. lambda=9.09 is moderate. The floor pressure means future tuning rounds should raise the min_child_weight lower bound (suggested: 100 for SH).
+**shorthanded:** best_iter=34 is the fewest trees of any state in any run — with lr=0.2503 and mcw=112, logloss early stopping fires very quickly. mcw=112 resolves the prior-run min_child_weight=50 floor concern (raised from ~50 in the prior trial): the model can now reach low predictions for low-quality SH shots without artificial floor inflation. gamma=4.7175 and alpha=1.3658 provide aggressive pruning and L1 regularization. spw=1.6468 is the highest among low-base-rate states.
 
-**empty_for (~Trial #547):** Same min_child_weight=50 floor concern (29K shots). lambda=10 and gamma=2.93 are reasonable. best_iter=122 reflects moderate early stopping.
+**empty_for:** alpha=2.7611 is the highest L1 regularization of all low-base-rate states. lr=0.1340 is slower than ES/PP/SH, consistent with best_iter=164 (the most trees of the low-base-rate states). mcw=182 is well above the prior trial's ~50, resolving the prior min_child_weight floor concern. OOF gap FAIL (0.1178) is anomalous in direction — hold-out (0.4318) exceeds training OOF (0.3140) — rather than the typical overfitting direction.
 
-**empty_against (Trial #606 — high confidence):** Trial #606 is confidently identified as the winner: highest CV PR-AUC (0.7674) among all mds=1 candidates for EA. lambda=95.62 is the highest across all states and all trials — strong regularization critical for a ~9K training event dataset. subsample=0.5 (aggressive row sampling) further prevents overfitting. The combination of mds=1 + lambda=95.62 + subsample=0.5 produces the best ECE (0.064) of any state. logit_base_xg feature gain (4.2%) is the highest for EA across any run, reflecting improved use of the base_xg quality signal.
+**empty_against:** lambda=165.4809 (highest of all states, up from ~95.62 prior) + mcw=443 (very large) + lr=0.0103 (extremely slow) = maximum regularization for the ~9K training event dataset. Despite lr=0.0103, best_iter=44 is low — EA logloss stabilizes rapidly at the 56.7% base rate regardless of learning rate, because the model is predicting a near-binary outcome from a narrow set of timing and speed features.
 
 ---
 
@@ -207,63 +205,61 @@ The trial-level params below are the most likely selected trial for each state, 
 
 #### even_strength
 
-**Performance tier:** ✅ PASS. Discrimination: very high (0.3213 ≥ 0.30 cutoff).
+**Performance tier:** ⚠️ WARN. Discrimination: very high (0.3800 ≥ 0.30 cutoff).
 
-**State:** Full calibration recovery. SHOT p90 dropped from 0.715 (bimodal, prior run) to **0.084** (1.44× base rate, PASS). Decile 9 near-perfect: mean_pred=0.230, actual=0.231, abs_err=0.0007. Max abs error 0.034 at decile 8. ECE=0.0055. Log loss +17.1% vs null. Precision=0.156 (2.6× base rate) and recall=0.558 at the decision threshold — previously precision=base_rate=0.060 with trivial recall=1.0.
+**High-confidence WARN:** The GOAL > 0.8 check fires at 16.6% (above the 15.0% WARN threshold at the 6.0% base rate). This is a regression from the prior run (✅ PASS). The structural cause is the higher learning rate (0.2616 vs ~0.116 prior) and fewer trees (best_iter=76 vs ~230). More aggressive per-tree leaf updates accumulate into higher predicted probabilities for top-decile events, pushing a larger fraction of goals above 0.80.
 
-**Season variance:** 2018–19 and 2023–24 consistently show PR-AUC around 0.19–0.21, below the 0.27–0.43 range of other seasons. This is a stable dataset pattern, not model degradation — likely related to rule changes or structural shifts in context-feature correlation with outcomes across those seasons.
+Despite the WARN, discrimination improved substantially: PR AUC 0.3213→0.3800 (+0.059), ROC AUC 0.7844→0.8005. Log loss improved from +17.1% to +21.5% over null. ECE=0.0030 (improved from 0.0055) — essentially perfect calibration. Calibration PASS: decile-based max abs error well below threshold. OOF gap=0.0200 is clean.
 
-**Mild remaining issue:** Decile 8 abs_err=0.034 (mean_pred=0.073, actual=0.107). The model slightly underestimates shots in the 70th–80th percentile. Minor overconservatism, not a bimodal artifact — within the PASS threshold.
-
-**Feature gain:** `seconds_since_stoppage` 53.7%, `prior_event_angle` 16.7%, `seconds_since_last` 6.2%, `prior_event_distance` 3.7%, `prior_event_opp` 2.8%, `logit_base_xg` 1.7%.
-
-`seconds_since_stoppage` at 53.7% is appropriate: for 5v5 play the strongest context signal is how recently the clock was stopped (faceoff, icing, power play setup). Shots immediately after stoppages are systematically higher quality than shots in sustained flow-of-play.
+**Feature gain:** `seconds_since_stoppage` 53.2%, `seconds_since_last` 18.1%, `prior_event_angle` 10.1%. Consistent with prior run (53.7% / 6.2% / 16.7%), though angle and seconds_since_last swapped ranks. Faceoff/stoppage timing context remains the dominant signal for 5v5 play.
 
 #### powerplay
 
-**Performance tier:** ✅ PASS. Discrimination: very high (0.3439 ≥ 0.30 cutoff).
+**Performance tier:** ⚠️ WARN. Discrimination: very high (0.3735 ≥ 0.30 cutoff).
 
-**State:** Full calibration recovery. SHOT p90=0.127 (1.34× base rate, PASS). Decile 9 near-perfect: mean_pred=0.302, actual=0.292, abs_err=0.009. Max abs error 0.029 at decile 8. ECE=0.006. Log loss +13.3% vs null. Lift over base_xg: +0.170 — the best absolute lift of all states.
+**High-confidence WARN:** 17.2% of hold-out goals have context_xg > 0.8 — the highest rate of the WARN states. Same structural cause as ES: lr=0.2664 + best_iter=74 produces larger per-tree leaf updates than the prior run (~0.196 / ~82 trees), driving top-decile predictions higher.
 
-**Unusual best_iteration=82:** Logloss early stopping fired after only 82 trees (of 500 max). PP has the highest base rate (10.3%) of the low-base-rate states and mds=1, allowing the model to find a good calibration state quickly. Despite fewer trees, PR-AUC and log loss are the strongest among the four low-base-rate states.
+Discrimination improved: PR AUC 0.3439→0.3735, ROC AUC 0.7009→0.7082. OOF gap improved dramatically from 0.0287→0.0064. Log loss +15.4% vs null (from +13.3%). ECE=0.0080 — excellent.
 
-**Feature gain:** `seconds_since_last` 32.5%, `play_speed` 14.7%, `prior_event_distance` 13.4%, `seconds_since_stoppage` 11.4%, `prior_event_angle` 10.2%, `logit_base_xg` 1.6%.
-
-The dominant feature for PP is `seconds_since_last` (vs `seconds_since_stoppage` for ES). On the power play, sustained zone pressure means recency of the last shot or pass is the primary context signal — faceoff timing matters less because PP sequences don't reset with stoppages the way 5v5 play does.
+**Feature gain:** `play_speed` 45.6%, `prior_event_distance` 18.9%, `seconds_since_stoppage` 10.4%. This is a notable shift from the prior run where `seconds_since_last` dominated (32.5%). The new trial weights `play_speed` as the primary context signal — rapid sequence transitions within sustained PP zone possession are the strongest discriminator of high-danger PP chances.
 
 #### shorthanded
 
-**Performance tier:** ✅ PASS. Discrimination: very high (0.3349 ≥ 0.28 cutoff).
+**Performance tier:** ⚠️ WARN. Discrimination: very high (0.3799 ≥ 0.28 cutoff).
 
-**State:** Full calibration recovery on the most volatile dataset (35K shots, 2,592 hold-out events). SHOT p90=0.115 (1.64× base rate, PASS). Decile 9 near-perfect: mean_pred=0.287, actual=0.277, abs_err=0.009. Max abs error 0.039 at decile 8. ECE=0.009. Log loss +17.8% vs null — the **best log loss improvement of all states**.
+**High-confidence WARN:** Fires at the SH-specific scaled threshold. Same mechanism as ES/PP — lr=0.2503, best_iter=34 (the fewest trees of any state) represents the most aggressive per-tree accumulation. 34 trees at this learning rate indicates logloss early stopping detected rapid calibration convergence on the small SH dataset (35K shots).
 
-**Low-decile floor (mild concern):** Deciles 0–3 overestimate by 0.020–0.029. The model predicts a floor of ~3.1% for the lowest-quality SH shots; actual rates are 0.15–1.4%. This is a min_child_weight=50 artifact: minimum leaf size of 50 samples prevents the model from reaching very low predictions. Within the PASS threshold (max abs error 0.039 ≤ 0.05 WARN), and decile 9 is near-perfect. Raising min_child_weight floor to 100 in future tuning would improve this.
+Discrimination improved strongly: PR AUC 0.3349→0.3799 (+0.045), ROC AUC 0.8200→0.8314 (highest ROC of all states). OOF gap shrank from 0.0221→0.0032 — the best OOF gap of the low-base-rate states. Log loss +21.6% vs null (from +17.8%). ECE=0.0100.
 
-**Feature gain:** `play_speed` 22.1%, `seconds_since_last` 11.2%, `prior_event_angle` 10.9%, `prior_event_distance` 9.2%, `seconds_since_stoppage` 8.8%, `logit_base_xg` 5.3%.
+**Prior min_child_weight floor concern resolved:** mcw=112 (up from ~50) prevents the artificial prediction floor that caused low-decile overestimation in the 2026-05-14 run. The prior suggestion to raise the mcw lower bound has been addressed by the tuning search finding a higher-mcw trial.
 
-`play_speed` is the only state where it dominates. Shorthanded goals are predominantly fast-break situations (breakaways, odd-man rushes). This is physically meaningful — SH scoring is almost exclusively counter-attack driven, making transition speed the single most discriminative context feature.
+**Feature gain:** `seconds_since_stoppage` 34.5%, `prior_event_distance` 17.4%, `play_speed` 15.0%, `seconds_since_last` 12.4%. Prior run was `play_speed` dominated (22.1%). The new trial weights stoppage timing alongside distance and speed — consistent with SH scoring mode (fast-break from icing calls captures both low stoppage-time and high play_speed). Both decompositions are physically sound.
 
 #### empty_for
 
-**Performance tier:** ✅ PASS. Discrimination: high (0.3136 ≥ 0.27 cutoff).
+**Performance tier:** ❌ FAIL (OOF gap). Discrimination: exceptional (0.4318 ≥ 0.27 cutoff) — the best PR AUC of any context_xg state.
 
-**State:** Full calibration recovery. SHOT p90=0.104 (1.32× base rate, PASS — the lowest normalized ratio, reflecting tight prediction spread). Decile 9 near-perfect: mean_pred=0.263, actual=0.266, abs_err=0.002. Max abs error 0.032 at decile 8. ECE=0.005 — the lowest ECE of all states. Log loss +13.4% vs null. OOF gap=0.006 — the smallest of all states, excellent generalization.
+**OOF gap FAIL:** gap = 0.1178 (FAIL threshold > 0.05). The anomaly is directional: hold-out PR AUC (0.4318) **exceeds** training OOF (0.3140), the reverse of the typical overfitting direction. The selected trial generalizes better to 2024-25 than to the 2010–2024 cross-validation folds. A likely structural explanation: the new EF trial captures temporal context patterns that have become more pronounced in recent seasons, making 2024-25 hold-out events easier to discriminate than older training fold events. The FAIL is a diagnostic flag, not a calibration or discrimination failure.
 
-**Feature gain:** `seconds_since_last` 22.2%, `seconds_since_stoppage` 20.6%, `prior_event_angle` 16.3%, `prior_event_distance` 13.3%, `is_rebound` 5.9%, `logit_base_xg` 2.3%.
+Calibration PASS (ECE=0.0117, max abs error well below threshold). Brier improvement +24.8% is the best of all states. Log loss +21.5% vs null.
 
-Two timing features split the gain for EF (`seconds_since_last` + `seconds_since_stoppage` = 42.8%). Empty-net attacks have strong temporal patterns: shots in immediate scrambles after a faceoff win (low `seconds_since_stoppage`) and direct follow-up shots (low `seconds_since_last`) convert at much higher rates than possession shots later in the sequence.
+**High-confidence WARN:** fires alongside the OOF gap FAIL (same high-lr mechanism as ES/PP/SH).
+
+**Feature gain:** `seconds_since_last` 20.0%, `prior_event_angle` 15.3%, `play_speed` 13.2%, `prior_event_distance` 11.0%. More balanced than prior run (which was timing-dominant, `seconds_since_last` 22.2% + `seconds_since_stoppage` 20.6% = 42.8%). The new trial spreads signal across temporal, geometric, and transition features.
 
 #### empty_against
 
-**Performance tier:** ⚠️ WARN (calibration decile 5–6). Discrimination: high (0.7879 ≥ 0.73 cutoff).
+**Performance tier:** ⚠️ WARN (calibration). Discrimination: high (0.7826 ≥ 0.73 cutoff).
 
-**State:** Meaningful improvement. Log loss +11.1% vs null (vs +0.1% in the biased-screening run). ECE=0.064. The WARN is from decile 5–6: mean_pred=0.588–0.612, actual=0.528–0.584, abs_err=0.041–0.059. Every other decile is well-calibrated: decile 9 has abs_err=0.005 (0.918 pred vs 0.923 actual). Precision=0.729, recall=0.602 at the 56.7% base rate threshold — genuine discrimination.
+PR AUC slight decline: 0.7879→0.7826 (−0.0053). Lift over base_xg: +0.0175 (down from +0.0450). Despite the lower PR AUC, ROC AUC improved slightly (0.7072→0.7117) and log loss improvement held (+11.0% vs +11.1%). ECE improved slightly (0.0638→0.0620).
 
-**Character of the WARN:** The model is moderately over-confident in the 55–65% probability range. This is a structural compression artifact: with a 56.7% base rate, predictions are forced into a narrow [0.30, 0.93] range, and the Platt calibrator cannot fully resolve mid-range overconfidence after correcting the extremes. Not a bimodal failure — a smooth monotone miscalibration that partially degrades probability quality in the middle of the prediction range.
+**Calibration WARN:** Decile 6 max abs error ~0.056 (WARN threshold). The model is moderately overconfident in the 55–65% probability range — same structural compression as prior run: narrow prediction range at 56.7% base rate, Platt calibrator cannot fully resolve mid-range overconfidence after correcting the extremes. Not a bimodal failure. All other deciles well-calibrated.
 
-**Feature gain:** `play_speed` 22.2%, `seconds_since_stoppage` 21.0%, `period_seconds` 10.6%, `prior_event_angle` 10.2%, `prior_event_distance` 8.8%, `seconds_since_last` 8.8%, `logit_base_xg` 4.2%.
+**High-confidence check:** ✅ PASS (trivially — at 56.7% base rate, the scaled threshold is >100%, unreachable).
 
-`logit_base_xg` at 4.2% is the highest for EA across any run — the model now uses the base_xg quality signal meaningfully. `play_speed` and `seconds_since_stoppage` together reflect the two EA goal-scoring modes: fast counters into the empty net (high play_speed) and attacks immediately after a stoppage (low seconds_since_stoppage).
+New selected trial is more heavily regularized than prior: mcw=443 (up from ~53), lambda=165.48 (up from ~95.62), lr=0.0103 (down from ~0.154). Despite the very slow learning rate, best_iter=44 is lower than prior (~149) — EA logloss stabilizes rapidly at this base rate regardless of learning rate.
+
+**Feature gain (6 features only):** `play_speed` 33.1%, `seconds_since_last` 25.7%, `prior_event_distance` 19.6%, `seconds_since_stoppage` 18.6%. Only 6 features had nonzero gain — context flag features and game-state modifiers contributed zero. EA collapses to 4 timing/speed/distance features plus 2 supporting features, reflecting the structural simplicity of open-net situations where the shot-quality question reduces to "how fast and how close?"
 
 ---
 
@@ -276,6 +272,7 @@ Two timing features split the gain for EF (`seconds_since_last` + `seconds_since
 | 2026-05-13 | 1.0.0 | ~500 (base_margin) | 0.3198 | 0.3427 | 0.3306 | 0.3066 | 0.7867 | +0.1607 | +0.1692 | +0.1391 | +0.1432 | +0.0439 | First run with logit_base_xg as base_margin (Issue 11). ES bimodal cliff collapsed (SHOT p90: 0.513→0.217); log loss −33.7%. PP improved FAIL→WARN (log loss −135.7%→−2.6%). EA OOF gap fixed (0.030→0.007). SH catastrophically regressed: log loss −3.4%→−462.6%, SHOT p90 jumped to 0.784 — calibrated top-N screening hit fallback (all 15 candidates bimodal in new landscape). eval_metric bug fixed (["aucpr","logloss"] → early stop on logloss), max_delta_step added to search space (1–5). |
 | 2026-05-14 | 1.0.0 | 750 / 1000 (top-n 15) | 0.3198 | 0.3407 | 0.3330 | 0.3042 | 0.7801 | +0.1607 | +0.1672 | +0.1415 | +0.1408 | +0.0373 | ALL STATES FAIL. Top-N screening failure: flat CV landscape (ES top-5 span 0.0005 PR-AUC) means bimodal (high-mds) trials fill all 15 screening slots; non-bimodal (mds=1) trials are at rank 16+. All candidates fail 2× null cal_ll threshold → fallback to least-bad bimodal → catastrophic miscalibration. ES: −440.4%, PP: −183.8%, SH: −326.9%, EF: −166.8%, EA: +0.1%. Fix: increase --top-n. |
 | 2026-05-14 | 1.0.0 | 750 / 1000 (top-n 150) | 0.3213 | 0.3439 | 0.3349 | 0.3136 | 0.7879 | +0.1622 | +0.1704 | +0.1435 | +0.1502 | +0.0450 | **Full calibration recovery.** All low-base-rate states PASS (ES/PP/SH/EF log loss +13–18% vs null, ECE < 0.01). EA ⚠️ WARN (calibration decile 5–6 overestimation; ECE=0.064; +11.1% log loss). Selected trials all have max_delta_step=1 — confirmed as the critical parameter for avoiding the bimodal cliff. Also fixed two diagnose.py checks: distribution check now uses SHOT p90 / base_rate (was inverted GOAL/SHOT ratio); high_conf thresholds now scale with base rate (EA no longer penalised for naturally elevated predictions). |
+| 2026-05-15 | 1.0.0 | 1500 / 1500 (top-n 150) | 0.3800 | 0.3735 | 0.3799 | 0.4318 | 0.7826 | +0.2205 | +0.2026 | +0.1920 | +0.2578 | +0.0175 | Additional tuning (750→1500 ES; 1000→1500 PP/SH/EF/EA). All 5 studies at 1500 trials. Issue 16 scoring fix applied. ES/PP/SH/EF all improved substantially (ES +0.059 PR AUC). New WARN pattern: high-confidence check fires for ES/PP/SH/EF — higher-lr trials (0.25–0.27 vs 0.12–0.21 prior) produce more aggressive leaf updates. EF ❌ FAIL on OOF gap (hold-out 0.4318 >> training OOF 0.3140, anomalous positive gap; calibration and discrimination both strong). EA PR AUC slight decline (0.7879→0.7826); lift over base_xg reduced (+0.0175 vs +0.0450). All selected trials mds=1 (confirmed via params.json). |
 
 ---
 

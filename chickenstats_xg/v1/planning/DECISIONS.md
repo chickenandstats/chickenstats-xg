@@ -964,6 +964,13 @@ experiments.py --model context_xg --strength empty_against  --version 1.0.0 --tr
 # ✅ DONE (2026-05-15): Step 15B — pred_goal data rebuilt (Issue 15 + Issue 16):
 # process-pred-goal re-run: corrected context_xg as base_margin; _1g features stripped; RAPM → xg dims only
 
+# ✅ DONE (2026-05-15): Additional context_xg tuning + re-finalize + re-diagnostic:
+# ES extended 750→1500 trials; PP/SH/EF/EA extended 1000→1500 — all 5 studies at 1500/1500
+# uv run finalize-context-xg --all --version 1.0.0 --no-log --top-n 150
+# uv run diagnose-context-xg
+# Results: ES/PP/SH ⚠️ WARN (high-conf); EF ❌ FAIL (OOF gap anomalous positive); EA ⚠️ WARN (cal)
+# ES PR AUC 0.3213→0.3800; SH best OOF gap of all states (0.0032); EF best PR AUC (0.4318)
+
 # ⏳ CURRENT (2026-05-15): Step 15C — Re-tune pred_goal (studies stale — feature columns changed):
 uv run xg-experiments --model pred_goal --strength even_strength --version 1.0.0 --trials 500   # × 5 strengths
 

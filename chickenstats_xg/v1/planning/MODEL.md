@@ -1020,8 +1020,9 @@ Rolling stats and RAPM are updated nightly by the scraper; RAPM is refreshed onc
 | 11 | Diagnose pred_goal — all FAIL; Issues 14+15 documented | ✅ Done (2026-05-14) |
 | 12 | Issue 16 fix — context_xg score.py Booster.predict → XGBClassifier.predict_proba; RAPM recomputed | ✅ Done (2026-05-15) |
 | 13 | Issue 15 fix — strip `_1g` features + RAPM subset to xg dims + process_data.py re-run | ✅ Done (2026-05-15) |
-| 14 | Re-tune pred_goal (500+ trials × 5 strengths — studies stale after feature change) | ⏳ Current Step |
-| 15 | Re-finalize + re-diagnose pred_goal; validate all tiers | ⬜ After step 14 |
+| 14 | Additional context_xg tuning (750→1500 ES; 1000→1500 PP/SH/EF/EA) + re-finalize `--top-n 150` + diagnostic | ✅ Done (2026-05-15) |
+| 15 | Re-tune pred_goal (500+ trials × 5 strengths — studies stale after feature change) | ⏳ Current Step |
+| 16 | Re-finalize + re-diagnose pred_goal; validate all tiers | ⬜ After step 15 |
 
 ### Data Status
 
@@ -1035,7 +1036,7 @@ Rolling stats and RAPM are updated nightly by the scraper; RAPM is refreshed onc
 | `chickenstats_xg/v1/data/context_xg/train/` | ✅ Present — rebuilt 2026-05-14 |
 | `chickenstats_xg/v1/data/context_xg/hold_out/` | ✅ Present — rebuilt 2026-05-14 |
 | `chickenstats_xg/v1/data/context_xg/scored/` | ✅ Present — re-scored 2026-05-15 with Issue 16 fix (XGBClassifier, dist_ratio 1.06–1.65×) |
-| `chickenstats_xg/v1/models/context_xg/` | ✅ Present — v1.0.0 finalized 2026-05-14 `--top-n 150` (ES/PP/SH/EF PASS; EA WARN) |
+| `chickenstats_xg/v1/models/context_xg/` | ✅ Present — v1.0.0 re-finalized 2026-05-15 `--top-n 150` (1500/1500 trials; ES/PP/SH WARN-high-conf; EF FAIL-OOF-gap; EA WARN-cal) |
 | `chickenstats_xg/v1/data/rapm/pbp/` | ✅ Present — re-enriched 2026-05-15 with corrected context_xg |
 | `chickenstats_xg/v1/data/rapm/stints/` | ✅ Present — rebuilt using context_xg for h_xgf/a_xgf |
 | `chickenstats_xg/v1/data/rapm/rapm_by_season.parquet` | ✅ Present — re-regressed 2026-05-15 (YOY r=0.317 PASS; all 4 checks PASS) |
