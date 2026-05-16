@@ -450,12 +450,17 @@ The ~10× scale difference between the boundary seasons (2010-12, 2024-25) and m
 
 ### Latest Diagnostic
 
-**Date:** 2026-05-14
+**Date:** 2026-05-14 (last completed run; see note below)
 **Model version:** 1.0.0 (pred_goal tier — talent features layered on context_xg base_margin)
 **Trials:** 500 per state
 **Finalization:** `--top-n 15` (default)
 **Hold-out season:** 2024-25
 **Key change from initial run:** Pooled OOF + hold-out calibration (was OOF-only). Resolved catastrophic log loss degradation across all four low-base-rate states (ES: −994% → −17.7% vs null; PP: −241% → −18.8%; SH: −442% → −22.5%; EF: −259% → −15.0%). See Issue 14 in `DECISIONS.md`.
+
+**⚠ Pending re-run (2026-05-15):** Feature set and base_margin have changed since this diagnostic.
+- Issue 16 (2026-05-15): context_xg re-scored with `XGBClassifier.predict_proba()` fix — base_margin is now correct (dist_ratio 1.06–1.65×); prior run used bimodal context_xg predictions from `Booster.predict()`.
+- Issue 15 (2026-05-15): `process_data.py` re-run — `_1g` rolling features stripped; RAPM reduced to xg_off/xg_def only (14 features, down from 36). pred_goal train/hold_out rebuilt.
+- Experiments re-tuning in progress. Results below reflect the **old feature set** and are superseded once experiments complete and `finalize-pred-xg` + `diagnose-pred-xg` are run.
 
 ### Pass / Fail Summary
 
@@ -471,7 +476,7 @@ The ~10× scale difference between the boundary seasons (2010-12, 2024-25) and m
 - **ES / PP / SH / EF:** Residual calibration FAIL (decile 8 non-monotone pattern; max abs error 0.13–0.19). Lift is positive but negligible (+0.0001–+0.0009 PR AUC over context_xg). See Issue 15.
 - **EA:** Calibration PASS (max abs error 0.023). Negative lift (−0.034 PR AUC vs context_xg). See Issue 15.
 
-**⚠ This run uses the old feature set (before Issue 15 fix).** Re-run after `pred_goal/process_data.py` with `_1g` features stripped and RAPM subset to xg dims.
+**⚠ These results use the old feature set (before Issue 15+16 fixes) and are superseded.** `process_data.py` re-run on 2026-05-15; experiments re-tuning in progress. Update this section after `finalize-pred-xg` + `diagnose-pred-xg` complete.
 
 ### Advanced Metrics (hold-out 2024-25)
 

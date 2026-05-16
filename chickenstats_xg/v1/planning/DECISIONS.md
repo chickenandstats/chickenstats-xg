@@ -723,21 +723,26 @@ In empty-against situations, the goalie has been pulled. Goalie form/talent feat
 | `compute_rolling_stats.py` | `_game_level_stats()`: removed `g1`/`s1` assignments; removed `_1g`, `_per_shot_1g`, `_shots_1g` from `with_columns()` and `select()`; updated `goalie_stat_cols` list; docstring updated (16 → 13 columns; "4 windows" → "3 windows") |
 | `process_data.py` | `_RAPM_COEFF_COLS`: 6 entries → 2 (xg_off + xg_def only); `_OFF_METRICS`: `["xg", "corsi", "goals"]` → `["xg"]`. All entity join functions iterate over `_RAPM_DIMS` (derived), so they propagate automatically. |
 
-**Operational sequence (pending):**
+**Operational sequence:**
 
 ```bash
-# Step 15A — Regenerate pred_goal train/hold_out parquets with new feature set:
-uv run python chickenstats_xg/v1/pred_goal/process_data.py
+# Step 15A — context_xg re-scored with Booster.predict fix (Issue 16):
+# ✅ DONE (2026-05-15) — score.py: Booster.predict → XGBClassifier.predict_proba (respects best_iteration)
+# All 5 states re-scored; RAPM PBP enriched; RAPM re-regressed (YOY r: 0.107 WARN → 0.317 PASS)
 
-# Step 15B — Re-tune (existing Optuna studies are stale — feature columns changed):
-uv run experiments --model pred_goal --strength even_strength --version 1.0.0 --trials 500
+# Step 15B — Regenerate pred_goal train/hold_out parquets with corrected context_xg + new feature set:
+# ✅ DONE (2026-05-15) — process_data.py re-run; _1g features stripped; RAPM subset to xg dims
+
+# Step 15C — Re-tune (existing Optuna studies are stale — feature columns changed):
+# ⏳ IN PROGRESS (2026-05-15)
+uv run xg-experiments --model pred_goal --strength even_strength --version 1.0.0 --trials 500
 # ... (repeat for all 5 strengths)
 
-# Step 15C — Re-finalize:
-uv run finalize-pred --all --version 1.0.0 --no-log
+# Step 15D — Re-finalize:
+uv run finalize-pred-xg --all --version 1.0.0 --no-log
 
-# Step 15D — Re-diagnose:
-uv run diagnose-pred-goal
+# Step 15E — Re-diagnose:
+uv run diagnose-pred-xg
 ```
 
 **Expected improvements:**
@@ -746,7 +751,47 @@ uv run diagnose-pred-goal
 - RAPM feature gain: higher (no longer overwhelmed by 1g noise features)
 - Lift over context_xg: should improve from near-zero once RAPM has signal
 
-### Status: IN PROGRESS (2026-05-14) — code changes applied; awaiting re-run
+### Status: IN PROGRESS (2026-05-15) — code changes applied (2026-05-14); `process_data.py` re-run 2026-05-15 with corrected context_xg (Issue 16 scoring fix) and new feature set; experiments re-tuning in progress
+
+---
+
+## Issue 16: context_xg/score.py Booster.predict() using all trees — bimodal scored predictions
+
+### Problem
+
+After finalizing context_xg models and validating them via `screen_trials()` (calibrated log loss ≤ 2× null, dist_ratio ≤ 3.0×), the per-season RAPM coefficients showed a catastrophic 10× scale discontinuity: boundary seasons (2010-12, 2024-25) had std ≈ 1.1 while middle seasons (2013-24) had std ≈ 0.07–0.11. The YOY stability check measured r=0.107 (WARN), driven by cross-era scale mismatch rather than genuine talent instability.
+
+A diagnostic script confirmed the root cause: same params, same iteration count — fresh model retrain produced dist_ratio 2.37× (PASS); saved model scoring through `score.py` produced dist_ratio 8.98× (bimodal FAIL). The saved model itself was correct; the loading/scoring path was wrong.
+
+### Root Cause
+
+`context_xg/score.py` loaded the saved booster with `xgb.Booster()` and called `booster.predict(dmat)` without specifying `iteration_range`. With `EARLY_STOPPING_ROUNDS=50`, the booster contains `best_iteration + 50` trees (e.g., 126 trees for even_strength with `best_iteration=76`). Scoring all 126 trees — rather than the `best_iteration=76` used during training — accumulated 50 additional post-early-stopping tree outputs that inflated leaf weights and produced a bimodal raw probability distribution.
+
+`base_xg/score.py` and `pred_goal/score.py` both used `XGBClassifier.predict_proba()`, which internally limits prediction to `best_iteration` trees. Only `context_xg/score.py` used raw `xgb.Booster`.
+
+### Status: RESOLVED (2026-05-15)
+
+**Fix applied to `context_xg/score.py`:**
+
+Replaced the `xgb.Booster()` + DMatrix + `booster.predict(dmat)` block with `load_model_artifacts()` + `model.predict_proba(X, base_margin=logit_bm)[:, 1]` from `utils/artifacts.py`. `XGBClassifier` loaded via `load_model_artifacts()` automatically limits prediction to `best_iteration` trees.
+
+**Impact:**
+
+| State | Old dist_ratio (Booster.predict) | New dist_ratio (XGBClassifier) |
+|---|---|---|
+| even_strength | 8.98× | 1.65× ✅ |
+| powerplay | 5.37× | 1.36× ✅ |
+| shorthanded | 7.66× | 1.58× ✅ |
+| empty_for | 7.06× | 1.24× ✅ |
+| empty_against | 1.14× | 1.06× ✅ |
+
+RAPM recomputed against correct context_xg: YOY stability improved from r=0.107 (WARN, results invalid) to r=0.317 (PASS). All per-season stds now consistent at 0.064–0.112.
+
+**Key rule:** Always use `XGBClassifier.predict_proba()` when loading a frozen booster for inference. Never use `xgb.Booster.predict()` without `iteration_range` on an early-stopped model. See `utils/artifacts.py` `load_model_artifacts()` for the canonical loading pattern.
+
+| File | Change |
+|---|---|
+| `context_xg/score.py` | Replaced `xgb.Booster()` + DMatrix + `booster.predict()` with `load_model_artifacts()` + `model.predict_proba(X, base_margin=logit_bm)[:, 1]`; removed `joblib` import |
 
 ---
 
@@ -848,7 +893,8 @@ detail level.
 | 12 | Post-base_margin diagnostics — middle-band overestimation (ES/PP/EF/EA); SH catastrophic regression (bimodal at 0.78–0.82). Root cause: bimodal (mds≥2) trials dominate top-15 in flat CV landscape; mds=1 candidates at rank 16+. Fix: `--top-n 150` | ✅ RESOLVED (2026-05-14) — ES/PP/SH/EF PASS; EA WARN (structural mid-range, acceptable) |
 | 13 | diagnose.py check logic errors — distribution check inverted (GOAL/SHOT ratio flagged good discrimination as FAIL); high-confidence check used fixed thresholds regardless of base rate (EA FAIL despite correct calibration) | ✅ RESOLVED (2026-05-14) — SHOT p90/base_rate check; base-rate-scaled high-conf thresholds |
 | 14 | pred_goal OOF calibration temporal drift — OOF-only Platt calibrator learned training-era talent matchup statistics (goalie_gsax_per_shot_1g as dominant feature) that don't hold in hold-out; ES log loss 10.9× null, PP/SH/EF 3–5× null | ✅ RESOLVED (2026-05-14) — pooled OOF + hold-out calibration; log loss improved to 1.13–1.23× null; residual decile-8 miscalibration remains (FAIL, max err 0.13–0.19) |
-| 15 | pred_goal negligible lift (+0.0001–+0.0009 PR AUC over context_xg for non-EA) and EA negative lift (−0.034 PR AUC); RAPM features < 1% gain; model dominated by noisy short-horizon goalie rolling features | 🔄 IN PROGRESS — strip `_1g` features + subset RAPM to xg dims (code applied 2026-05-14); process_data → re-tune → finalize → diagnose pending |
+| 15 | pred_goal negligible lift (+0.0001–+0.0009 PR AUC over context_xg for non-EA) and EA negative lift (−0.034 PR AUC); RAPM features < 1% gain; model dominated by noisy short-horizon goalie rolling features | 🔄 IN PROGRESS — code applied 2026-05-14; process_data re-run 2026-05-15 with corrected context_xg (Issue 16) + new feature set; experiments re-tuning in progress |
+| 16 | context_xg/score.py `Booster.predict()` using all trees — bimodal scored predictions from saved model (dist_ratio 8.98× vs 2.37× from fresh retrain); caused 10× RAPM coefficient scale discontinuity | ✅ RESOLVED (2026-05-15) — replaced `xgb.Booster.predict()` with `load_model_artifacts()` + `XGBClassifier.predict_proba()` which respects `best_iteration`; all states cleaned (dist_ratio 1.24–1.65×); RAPM YOY r improved from 0.107 WARN to 0.317 PASS |
 
 ---
 
@@ -910,12 +956,20 @@ experiments.py --model context_xg --strength empty_against  --version 1.0.0 --tr
 # pred_goal/diagnose.py — calibration FAIL (residual decile-8); negligible lift.
 # Issues 14 and 15 documented. Pooled calibration applied (Issue 14 resolved).
 
-# ⚠️  CURRENT: Step 15 — pred_goal feature re-design (Issue 15 fix):
-#   Step 15A: compute_rolling_stats.py + process_data.py changes — ✅ CODE DONE (2026-05-14)
-uv run python chickenstats_xg/v1/pred_goal/process_data.py     # regenerate parquets with new feature set
-uv run experiments --model pred_goal --strength even_strength --version 1.0.0 --trials 500   # × 5 strengths
-uv run finalize-pred --all --version 1.0.0 --no-log
-uv run diagnose-pred-goal
+# ✅ DONE (2026-05-15): Issue 16 fix — context_xg re-scored (Booster.predict → XGBClassifier.predict_proba):
+# score-context-xg --all (with RAPM prep): all 5 states cleaned (dist_ratio 1.06–1.65×)
+# RAPM PBP enriched with corrected context_xg; stints rebuilt; regressions re-run
+# RAPM diagnostics: YOY r=0.317 PASS; all 4 checks PASS
+
+# ✅ DONE (2026-05-15): Step 15B — pred_goal data rebuilt (Issue 15 + Issue 16):
+# process-pred-goal re-run: corrected context_xg as base_margin; _1g features stripped; RAPM → xg dims only
+
+# ⏳ CURRENT (2026-05-15): Step 15C — Re-tune pred_goal (studies stale — feature columns changed):
+uv run xg-experiments --model pred_goal --strength even_strength --version 1.0.0 --trials 500   # × 5 strengths
+
+# AFTER Step 15C:
+uv run finalize-pred-xg --all --version 1.0.0 --no-log
+uv run diagnose-pred-xg
 
 # AFTER Step 15 completes:
 uv run diagnose-rapm

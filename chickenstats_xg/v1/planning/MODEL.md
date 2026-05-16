@@ -46,11 +46,11 @@ Tier 2 — context_xg  (XGBoost gbtree, depth=2, 9 flag/state isolation constrai
 
 Tier 3 — pred_goal  (XGBoost gbtree)
   logit(context_xg) as base_margin
-  + rolling shooter GxG (goals above context_xg)
-  + rolling goalie GSAx (saves above context_xg)
-  + multi-RAPM (context_xg / Corsi / Goals × off / def for shooter, teammates, opponents)
+  + rolling shooter GxG (goals above context_xg) — career / season / 10g / EWMA windows
+  + rolling goalie GSAx (saves above context_xg) — career / season / 10g / EWMA windows
+  + RAPM (context_xg xg_off / xg_def for shooter, teammates, opponents × prior season + career)
   → talent residual P(goal | who is shooting, given geometry + sequence context)
-  Output: pred_goal ∈ (0, 1), isotonic-calibrated
+  Output: pred_goal ∈ (0, 1), pooled OOF + hold-out Platt-calibrated
 ```
 
 **Why three tiers?**
@@ -352,8 +352,6 @@ Metric: `goal − context_xg` per shot. Computed via `pred_goal/compute_rolling_
 | `shooter_gax_per_shot_season` | Current season + session | Same shrinkage |
 | `shooter_gax_10g` | 10 most recent completed games | |
 | `shooter_gax_per_shot_10g` | Same | |
-| `shooter_gax_1g` | Most recent completed game | |
-| `shooter_gax_per_shot_1g` | Same | |
 | `shooter_gax_ewma` | EWMA, half-life = 50 shots | Captures hot/cold streaks |
 
 All apply `.shift(1)` leakage guard over `player_1_api_id`.
@@ -370,8 +368,6 @@ Metric: `context_xg − goal` per shot (inverted). Empty-net shots (`opp_goalie_
 | `goalie_gsax_per_shot_season` | Season (shrinkage) |
 | `goalie_gsax_10g` | 10 most recent games |
 | `goalie_gsax_per_shot_10g` | |
-| `goalie_gsax_1g` | Last game |
-| `goalie_gsax_per_shot_1g` | |
 | `goalie_gsax_ewma` | EWMA, half-life = 50 shots |
 
 All apply `.shift(1)` leakage guard over `opp_goalie_api_id`.
@@ -380,48 +376,43 @@ All apply `.shift(1)` leakage guard over `opp_goalie_api_id`.
 
 Three separate ridge regressions per season/session/situation: `context_xg`, `corsi`, `goals`. Each yields offensive (`off_coeff`) and defensive (`def_coeff`) estimates. RAPM from season S is joined to season S+1 shots.
 
-**Shooter RAPM (6 columns):**
+**Shooter RAPM (4 columns) — prior season + career, xg dims only (Issue 15 fix):**
 
 | Feature | Description |
 |---|---|
-| `shooter_rapm_xg_off` | Shooter's context_xg offensive RAPM |
-| `shooter_rapm_xg_def` | Shooter's context_xg defensive RAPM |
-| `shooter_rapm_corsi_off` | Shooter's Corsi offensive RAPM |
-| `shooter_rapm_corsi_def` | Shooter's Corsi defensive RAPM |
-| `shooter_rapm_goals_off` | Shooter's goals offensive RAPM |
-| `shooter_rapm_goals_def` | Shooter's goals defensive RAPM |
+| `shooter_rapm_xg_off` | Shooter's context_xg offensive RAPM (prior season S−1) |
+| `shooter_rapm_xg_def` | Shooter's context_xg defensive RAPM (prior season S−1) |
+| `shooter_rapm_career_xg_off` | Shooter's career context_xg offensive RAPM (season=0 aggregate) |
+| `shooter_rapm_career_xg_def` | Shooter's career context_xg defensive RAPM |
 
-**Teammates RAPM (6 columns) — mean of on-ice teammates, shooter + goalie excluded:**
+**Teammates RAPM (4 columns) — mean of on-ice teammates, shooter + goalie excluded:**
 
 | Feature | Description |
 |---|---|
-| `teammates_rapm_xg_off` | Teammates avg context_xg offensive RAPM |
-| `teammates_rapm_xg_def` | Teammates avg context_xg defensive RAPM |
-| `teammates_rapm_corsi_off` | Teammates avg Corsi offensive RAPM |
-| `teammates_rapm_corsi_def` | Teammates avg Corsi defensive RAPM |
-| `teammates_rapm_goals_off` | Teammates avg goals offensive RAPM |
-| `teammates_rapm_goals_def` | Teammates avg goals defensive RAPM |
+| `teammates_rapm_xg_off` | Teammates avg context_xg offensive RAPM (prior season) |
+| `teammates_rapm_xg_def` | Teammates avg context_xg defensive RAPM (prior season) |
+| `teammates_rapm_career_xg_off` | Teammates avg career context_xg offensive RAPM |
+| `teammates_rapm_career_xg_def` | Teammates avg career context_xg defensive RAPM |
 
-**Opponent RAPM (6 columns) — mean of on-ice opponents:**
+**Opponent RAPM (4 columns) — mean of on-ice opponents:**
 
 | Feature | Description |
 |---|---|
-| `opp_rapm_xg_off` | Opponents avg context_xg offensive RAPM |
-| `opp_rapm_xg_def` | Opponents avg context_xg defensive RAPM |
-| `opp_rapm_corsi_off` | Opponents avg Corsi offensive RAPM |
-| `opp_rapm_corsi_def` | Opponents avg Corsi defensive RAPM |
-| `opp_rapm_goals_off` | Opponents avg goals offensive RAPM |
-| `opp_rapm_goals_def` | Opponents avg goals defensive RAPM |
+| `opp_rapm_xg_off` | Opponents avg context_xg offensive RAPM (prior season) |
+| `opp_rapm_xg_def` | Opponents avg context_xg defensive RAPM (prior season) |
+| `opp_rapm_career_xg_off` | Opponents avg career context_xg offensive RAPM |
+| `opp_rapm_career_xg_def` | Opponents avg career context_xg defensive RAPM |
 
-**Shooter vs. Teammates differential (3 columns — offensive only):**
+**Shooter vs. Teammates differential (2 columns — xg offensive only):**
 
 | Feature | Formula | Intuition |
 |---|---|---|
-| `shooter_vs_teammates_rapm_xg_off` | `shooter_xg_off − teammates_xg_off` | Positive = shooter elevates the line |
-| `shooter_vs_teammates_rapm_corsi_off` | `shooter_corsi_off − teammates_corsi_off` | |
-| `shooter_vs_teammates_rapm_goals_off` | `shooter_goals_off − teammates_goals_off` | |
+| `shooter_vs_teammates_rapm_xg_off` | `shooter_xg_off − teammates_xg_off` (prior season) | Positive = shooter elevates the line |
+| `shooter_vs_teammates_rapm_career_xg_off` | `shooter_career_xg_off − teammates_career_xg_off` | Career version of above |
 
 No defensive differential — defensive RAPM is independent of the shooter's offensive role.
+
+**Why corsi and goals dims dropped (Issue 15):** Corsi is a shot-volume signal already captured by context_xg's geometry and game-state features. Goals RAPM is extremely noisy (rare binary events). Restricting to xg dims reduces total RAPM features from 36 → 14 and gives the model a cleaner, more stable talent signal.
 
 **RAPM situation matching:**
 
@@ -502,7 +493,9 @@ Events with < 2 teammates having prior-season RAPM receive null — XGBoost hand
   geometry + sequence prior. The model never needs to re-learn location or shot context.
 - **Feature matrix:** All `BASE_XG_FEATURE_COLUMNS` and `CONTEXT_XG_FEATURE_COLUMNS` are excluded
   from pred_goal parquets entirely — dropped in `pred_goal/process_data.py` before writing.
-  pred_goal sees only talent features: shooter GxG/GSAx rolling windows and RAPM.
+  pred_goal sees only talent features: shooter GxG/GSAx rolling windows (career / season / 10g / EWMA;
+  `_1g` window removed in Issue 15) and RAPM (xg_off / xg_def for shooter, teammates, opponents × prior + career;
+  corsi and goals dims dropped in Issue 15 — total RAPM features 36 → 14).
 - **Logit transform:** `log(clip(p, 1e-7, 1−1e-7) / (1 − clip(p, 1e-7, 1−1e-7)))` — avoids ±inf
 - **Categorical handling:** `enable_categorical=True`
 - **Calibration:** OOF isotonic regression (5-fold `TimeSeriesSplit`). Calibrator saved as `{strength}/calibrator.joblib`.
@@ -938,7 +931,6 @@ Stints with TOI = 0 or fewer than 3 skaters per side are excluded.
 | Career | `cum_sum().shift(1).over(player_id)` | `.shift(1)` ensures current shot not included |
 | Season | `cum_sum().shift(1).over([player_id, 'season', 'session'])` | Same |
 | 10g | `rolling_sum(10).shift(1).over(player_id)` on game-level aggregate | `.shift(1)` on game-level |
-| 1g | `shift(1).over(player_id)` on game-level aggregate | |
 | EWMA | `ewm_mean(half_life=50, ignore_nulls=True).shift(1).over(player_id)` | |
 
 **Bayesian shrinkage on per-shot rates:**
@@ -1002,7 +994,7 @@ Rolling stats and RAPM are updated nightly by the scraper; RAPM is refreshed onc
 | `chickenstats_xg/v1/rapm/prep_pbp.py` | ✅ Complete (joins base_xg onto raw PBP via event_idx) |
 | `chickenstats_xg/v1/rapm/process_stints.py` | ✅ Complete (h_xgf/a_xgf from context_xg) |
 | `chickenstats_xg/v1/rapm/regressions.py` | ✅ Complete (3-metric RAPM; context_xg as xGF target) |
-| `chickenstats_xg/v1/pred_goal/compute_rolling_stats.py` | ✅ Complete (career/season/10g/1g/EWMA) |
+| `chickenstats_xg/v1/pred_goal/compute_rolling_stats.py` | ✅ Complete (career/season/10g/EWMA; `_1g` window removed Issue 15) |
 | `chickenstats_xg/v1/pred_goal/process_data.py` | ✅ Complete (reads context_xg/scored/; multi-RAPM joins) |
 | `chickenstats_xg/v1/pred_goal/finalize.py` | ✅ Complete |
 | `chickenstats_xg/v1/base_xg/run_pipeline.py` | ✅ Complete (finalize → score → context_xg process_data) |
@@ -1026,9 +1018,10 @@ Rolling stats and RAPM are updated nightly by the scraper; RAPM is refreshed onc
 | 9 | Tune pred_goal (500 trials × 5 strengths) | ✅ Done (2026-05-14) |
 | 10 | Finalize pred_goal (pooled OOF + hold-out calibration) | ✅ Done (2026-05-14) |
 | 11 | Diagnose pred_goal — all FAIL; Issues 14+15 documented | ✅ Done (2026-05-14) |
-| 12 | Issue 15 fix — strip `_1g` features + RAPM subset to xg dims (code applied) | ✅ Code done (2026-05-14) |
-| 13 | Re-run pred_goal: `process_data.py` → re-tune 500+ trials → re-finalize → re-diagnose | ⏳ Current Step |
-| 14 | Validate all tiers (base_xg / context_xg / pred_goal / rapm diagnose.py) | ⬜ After step 13 |
+| 12 | Issue 16 fix — context_xg score.py Booster.predict → XGBClassifier.predict_proba; RAPM recomputed | ✅ Done (2026-05-15) |
+| 13 | Issue 15 fix — strip `_1g` features + RAPM subset to xg dims + process_data.py re-run | ✅ Done (2026-05-15) |
+| 14 | Re-tune pred_goal (500+ trials × 5 strengths — studies stale after feature change) | ⏳ Current Step |
+| 15 | Re-finalize + re-diagnose pred_goal; validate all tiers | ⬜ After step 14 |
 
 ### Data Status
 
@@ -1041,14 +1034,14 @@ Rolling stats and RAPM are updated nightly by the scraper; RAPM is refreshed onc
 | `chickenstats_xg/v1/models/base_xg/` | ✅ Present — v1.0.0 finalized 2026-05-14 (ES/PP/SH/EF PASS, EA WARN-high-conf) |
 | `chickenstats_xg/v1/data/context_xg/train/` | ✅ Present — rebuilt 2026-05-14 |
 | `chickenstats_xg/v1/data/context_xg/hold_out/` | ✅ Present — rebuilt 2026-05-14 |
-| `chickenstats_xg/v1/data/context_xg/scored/` | ✅ Present — scored 2026-05-14 with v1.0.0 context_xg |
+| `chickenstats_xg/v1/data/context_xg/scored/` | ✅ Present — re-scored 2026-05-15 with Issue 16 fix (XGBClassifier, dist_ratio 1.06–1.65×) |
 | `chickenstats_xg/v1/models/context_xg/` | ✅ Present — v1.0.0 finalized 2026-05-14 `--top-n 150` (ES/PP/SH/EF PASS; EA WARN) |
-| `chickenstats_xg/v1/data/rapm/pbp/` | ✅ Present — enriched 2026-05-14 with base_xg + context_xg |
-| `chickenstats_xg/v1/data/rapm/stints/` | ✅ Present — rebuilt 2026-05-14 using context_xg for h_xgf/a_xgf |
-| `chickenstats_xg/v1/data/rapm/rapm_by_season.parquet` | ✅ Present — re-regressed 2026-05-14 with context_xg as xGF target |
-| `chickenstats_xg/v1/data/pred_goal/train/` | ⏳ Stale — needs rebuild with Issue 15 feature set (strip `_1g`, subset RAPM) |
-| `chickenstats_xg/v1/data/pred_goal/hold_out/` | ⏳ Stale — needs rebuild |
-| `chickenstats_xg/v1/models/pred_goal/` | ⏳ Present (v1 with old features) — re-tune + re-finalize after process_data.py re-run |
+| `chickenstats_xg/v1/data/rapm/pbp/` | ✅ Present — re-enriched 2026-05-15 with corrected context_xg |
+| `chickenstats_xg/v1/data/rapm/stints/` | ✅ Present — rebuilt using context_xg for h_xgf/a_xgf |
+| `chickenstats_xg/v1/data/rapm/rapm_by_season.parquet` | ✅ Present — re-regressed 2026-05-15 (YOY r=0.317 PASS; all 4 checks PASS) |
+| `chickenstats_xg/v1/data/pred_goal/train/` | ✅ Present — rebuilt 2026-05-15 with Issue 15+16 feature set (_1g stripped; RAPM xg only) |
+| `chickenstats_xg/v1/data/pred_goal/hold_out/` | ✅ Present — rebuilt 2026-05-15 |
+| `chickenstats_xg/v1/models/pred_goal/` | ⏳ Stale — experiments in progress (2026-05-15); re-finalize after tuning completes |
 
 ---
 
@@ -1098,4 +1091,4 @@ No critical blockers remain. All scripts are implemented. base_xg and context_xg
 
 ---
 
-*This document reflects the state as of 2026-05-15. Three-tier cascade architecture: base_xg (8 pure geometry + shot_type features, OOF isotonic calibration) → context_xg (20 features: logit_base_xg as BOTH base_margin AND feature in 9 constraint groups + binary flags + game-state modifiers + sequence, gbtree depth-2, pooled OOF + hold-out Platt calibration; finalize with `--top-n 150`) → pred_goal (talent features only, logit(context_xg) as base_margin). All tiers trained 2026-05-14; pipeline at Step 13 (pred_goal re-run with Issue 15 feature redesign — strip `_1g` features + subset RAPM to xg dims). Utils modularization completed 2026-05-15: finalize_utils.py, artifacts.py, diagnose_utils.py. See `chickenstats_xg/v1/planning/DECISIONS.md` for the full issue history.*
+*This document reflects the state as of 2026-05-15. Three-tier cascade architecture: base_xg (8 pure geometry + shot_type features, OOF isotonic calibration) → context_xg (20 features: logit_base_xg as BOTH base_margin AND feature in 9 constraint groups + binary flags + game-state modifiers + sequence, gbtree depth-2, pooled OOF + hold-out Platt calibration; finalize with `--top-n 150`; Issue 16 scoring fix applied) → pred_goal (talent features only: GxG/GSAx career/season/10g/EWMA + xg RAPM dims; logit(context_xg) as base_margin; re-tuning in progress after Issue 15 feature redesign). RAPM diagnostics: all 4 checks PASS (YOY r=0.317). Utils modularization completed 2026-05-15: finalize_utils.py, artifacts.py, diagnose_utils.py. See `chickenstats_xg/v1/planning/DECISIONS.md` for the full issue history.*
