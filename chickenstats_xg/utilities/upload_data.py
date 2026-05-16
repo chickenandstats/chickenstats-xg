@@ -37,6 +37,7 @@ import boto3
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from chickenstats.utilities import ChickenProgress
 from dotenv import load_dotenv
 
 # Force single-part uploads so ETag == MD5(file) always.
@@ -85,7 +86,6 @@ def _upload_dir(
     bucket: str,
     directory: Path,
     dry_run: bool,
-    verbose: bool,
 ) -> tuple[int, int]:
     """Upload all .parquet files under directory. Returns (uploaded, skipped)."""
     uploaded = skipped = 0
@@ -94,30 +94,30 @@ def _upload_dir(
         print(f"  (no parquet files found in {directory.relative_to(_REPO_ROOT)})")
         return 0, 0
 
-    for path in parquets:
-        key = _r2_key(path)
-        local_md5 = _md5(path)
+    label = directory.relative_to(_REPO_ROOT).as_posix()
+    with ChickenProgress() as progress:
+        task = progress.add_task(f"Uploading {label}...", total=len(parquets))
+        for path in parquets:
+            key = _r2_key(path)
+            local_md5 = _md5(path)
+            size_mb = path.stat().st_size / 1_048_576
 
-        # Check if already up-to-date via ETag
-        try:
-            head = s3.head_object(Bucket=bucket, Key=key)
-            remote_etag = head["ETag"].strip('"')
-            if remote_etag == local_md5:
-                if verbose:
-                    print(f"  skip  {key}")
-                skipped += 1
-                continue
-        except ClientError as e:
-            if e.response["Error"]["Code"] not in ("404", "NoSuchKey"):
-                raise
+            try:
+                head = s3.head_object(Bucket=bucket, Key=key)
+                remote_etag = head["ETag"].strip('"')
+                if remote_etag == local_md5:
+                    skipped += 1
+                    progress.update(task, advance=1)
+                    continue
+            except ClientError as e:
+                if e.response["Error"]["Code"] not in ("404", "NoSuchKey"):
+                    raise
 
-        size_mb = path.stat().st_size / 1_048_576
-        if dry_run:
-            print(f"  [dry] {key}  ({size_mb:.1f} MB)")
-        else:
-            print(f"  up    {key}  ({size_mb:.1f} MB)")
-            s3.upload_file(str(path), bucket, key, Config=_TRANSFER_CONFIG)
-        uploaded += 1
+            progress.update(task, description=f"{'[dry] ' if dry_run else ''}↑ {path.name} ({size_mb:.1f} MB)")
+            if not dry_run:
+                s3.upload_file(str(path), bucket, key, Config=_TRANSFER_CONFIG)
+            uploaded += 1
+            progress.update(task, advance=1)
 
     return uploaded, skipped
 
@@ -146,8 +146,6 @@ def main() -> None:
         help="Print what would be uploaded without uploading.",
     )
     parser.add_argument(
-        "--verbose", "-v", action="store_true",
-        help="Print skipped (already up-to-date) files too.",
     )
     args = parser.parse_args()
 
@@ -190,7 +188,7 @@ def main() -> None:
             print(f"  [{name}] directory not found: {directory} — skipping")
             continue
         print(f"\n[{name}] {directory.relative_to(_REPO_ROOT)}")
-        up, sk = _upload_dir(s3, bucket, directory, dry_run=args.dry_run, verbose=args.verbose)
+        up, sk = _upload_dir(s3, bucket, directory, dry_run=args.dry_run)
         total_uploaded += up
         total_skipped += sk
 

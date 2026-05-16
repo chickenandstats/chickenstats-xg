@@ -36,6 +36,7 @@ import boto3
 from boto3.s3.transfer import TransferConfig
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from chickenstats.utilities import ChickenProgress
 from dotenv import load_dotenv
 
 # Match upload_data.py: single-part only so ETag == MD5(file) for dedup.
@@ -83,7 +84,6 @@ def _download_prefix(
     bucket: str,
     prefix: str,
     dry_run: bool,
-    verbose: bool,
 ) -> tuple[int, int]:
     """Download all .parquet objects under prefix. Returns (downloaded, skipped)."""
     objects = [o for o in _list_objects(s3, bucket, prefix) if o["Key"].endswith(".parquet")]
@@ -92,29 +92,30 @@ def _download_prefix(
         return 0, 0
 
     downloaded = skipped = 0
-    for obj in objects:
-        key = obj["Key"]
-        remote_etag = obj["ETag"].strip('"')
-        # v1/... keys live under chickenstats_xg/ locally; raw_data/... keys are repo-root relative.
-        if key.startswith("v1/"):
-            local_path = _REPO_ROOT / "chickenstats_xg" / key
-        else:
-            local_path = _REPO_ROOT / key
+    with ChickenProgress() as progress:
+        task = progress.add_task(f"Downloading {prefix}...", total=len(objects))
+        for obj in objects:
+            key = obj["Key"]
+            remote_etag = obj["ETag"].strip('"')
+            size_mb = obj["Size"] / 1_048_576
 
-        if local_path.exists() and _md5(local_path) == remote_etag:
-            if verbose:
-                print(f"  skip  {key}")
-            skipped += 1
-            continue
+            # v1/... keys live under chickenstats_xg/ locally; raw_data/... keys are repo-root relative.
+            if key.startswith("v1/"):
+                local_path = _REPO_ROOT / "chickenstats_xg" / key
+            else:
+                local_path = _REPO_ROOT / key
 
-        size_mb = obj["Size"] / 1_048_576
-        if dry_run:
-            print(f"  [dry] {key}  ({size_mb:.1f} MB)")
-        else:
-            print(f"  down  {key}  ({size_mb:.1f} MB)")
-            local_path.parent.mkdir(parents=True, exist_ok=True)
-            s3.download_file(bucket, key, str(local_path), Config=_TRANSFER_CONFIG)
-        downloaded += 1
+            if local_path.exists() and _md5(local_path) == remote_etag:
+                skipped += 1
+                progress.update(task, advance=1)
+                continue
+
+            progress.update(task, description=f"{'[dry] ' if dry_run else ''}↓ {Path(key).name} ({size_mb:.1f} MB)")
+            if not dry_run:
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                s3.download_file(bucket, key, str(local_path), Config=_TRANSFER_CONFIG)
+            downloaded += 1
+            progress.update(task, advance=1)
 
     return downloaded, skipped
 
@@ -141,10 +142,6 @@ def main() -> None:
     parser.add_argument(
         "--dry-run", action="store_true",
         help="Print what would be downloaded without downloading.",
-    )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true",
-        help="Print skipped (already up-to-date) files too.",
     )
     args = parser.parse_args()
 
@@ -184,7 +181,7 @@ def main() -> None:
     total_downloaded = total_skipped = 0
     for name, prefix in prefixes:
         print(f"\n[{name}] {prefix}")
-        dn, sk = _download_prefix(s3, bucket, prefix, dry_run=args.dry_run, verbose=args.verbose)
+        dn, sk = _download_prefix(s3, bucket, prefix, dry_run=args.dry_run)
         total_downloaded += dn
         total_skipped += sk
 

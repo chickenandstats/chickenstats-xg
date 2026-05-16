@@ -17,6 +17,7 @@ import argparse
 from pathlib import Path
 
 import polars as pl
+from chickenstats.utilities import ChickenProgress
 
 from chickenstats_xg.v1.config import CONTEXT_XG_FEATURE_COLUMNS, PASSTHROUGH_COLS, STRENGTHS
 from chickenstats_xg.v1.utils.data_splitting import write_train_holdout_split
@@ -57,10 +58,12 @@ def main() -> None:
     out_dir = base_dir / "data" / "context_xg"
 
     targets = [args.strength] if args.strength else STRENGTHS
-    print(f"Processing {len(targets)} strength state(s)...")
-    for strength in targets:
-        process_strength(strength, scored_dir, out_dir)
-    print("Done.")
+    with ChickenProgress() as progress:
+        task = progress.add_task("Processing context_xg data...", total=len(targets))
+        for strength in targets:
+            progress.update(task, description=f"Processing {strength}...")
+            process_strength(strength, scored_dir, out_dir)
+            progress.update(task, advance=1)
 
 
 if __name__ == "__main__":

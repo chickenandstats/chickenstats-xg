@@ -25,6 +25,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import xgboost as xgb
+from chickenstats.utilities import ChickenProgress
 
 from chickenstats_xg.v1.config import CONTEXT_XG_FEATURE_COLUMNS, STRENGTHS
 from chickenstats_xg.v1.utils.transforms import apply_fixed_categoricals, logit
@@ -104,11 +105,13 @@ def main() -> None:
     scored_dir = base_dir / "data" / "context_xg" / "scored"
 
     targets = STRENGTHS if args.all else [args.strength]
-    print(f"Scoring {len(targets)} strength state(s)...")
-    scored_count = sum(
-        score_strength(strength, base_xg_scored_dir, models_dir, scored_dir)
-        for strength in targets
-    )
+    scored_count = 0
+    with ChickenProgress() as progress:
+        task = progress.add_task("Scoring context_xg...", total=len(targets))
+        for strength in targets:
+            progress.update(task, description=f"Scoring {strength}...")
+            scored_count += score_strength(strength, base_xg_scored_dir, models_dir, scored_dir)
+            progress.update(task, advance=1)
 
     if args.all and not args.no_rapm:
         if scored_count == 0:
