@@ -1,11 +1,14 @@
 {
   "strength": "powerplay",
   "tier": "base_xg",
-  "version": "1.0.0",
-  "optuna_study_name": "powerplay-1.0.0-base",
-  "optuna_trial_number": 873,
-  "optuna_trial_value": 0.171736,
-  "mlflow_tuning_run_id": "729a71808e184cc79a5560586ade95bb",
-  "git_commit": "df88baf",
-  "finalized_at": "2026-05-15T03:37:19.270992+00:00"
+  "version": "1.0.1",
+  "optuna_study_name": "powerplay-1.0.1-base",
+  "optuna_trial_number": 1480,
+  "optuna_trial_values": [
+    0.172427,
+    0.304238
+  ],
+  "mlflow_tuning_run_id": "978316cfc9aa4f69ba4ed0470c09d90f",
+  "git_commit": "f8c1349",
+  "finalized_at": "2026-05-18T13:57:49.687049+00:00"
 }

@@ -1,11 +1,14 @@
 {
   "strength": "even_strength",
   "tier": "base_xg",
-  "version": "1.0.0",
-  "optuna_study_name": "even_strength-1.0.0-base",
-  "optuna_trial_number": 400,
-  "optuna_trial_value": 0.16561,
-  "mlflow_tuning_run_id": "5fa47ed8393d40168f38f5ab1a372c8f",
-  "git_commit": "df88baf",
-  "finalized_at": "2026-05-15T03:35:40.892748+00:00"
+  "version": "1.0.1",
+  "optuna_study_name": "even_strength-1.0.1-base",
+  "optuna_trial_number": 1401,
+  "optuna_trial_values": [
+    0.165783,
+    0.202395
+  ],
+  "mlflow_tuning_run_id": "c131e83821bb483396cf54a15e1cc9ab",
+  "git_commit": "f8c1349",
+  "finalized_at": "2026-05-18T13:56:34.722492+00:00"
 }

@@ -1,11 +1,14 @@
 {
   "strength": "empty_for",
   "tier": "base_xg",
-  "version": "1.0.0",
-  "optuna_study_name": "empty_for-1.0.0-base",
-  "optuna_trial_number": 50,
-  "optuna_trial_value": 0.184292,
-  "mlflow_tuning_run_id": "28ee9bed771341b5b3025a7d003fe5dc",
-  "git_commit": "df88baf",
-  "finalized_at": "2026-05-15T03:42:28.109571+00:00"
+  "version": "1.0.1",
+  "optuna_study_name": "empty_for-1.0.1-base",
+  "optuna_trial_number": 1794,
+  "optuna_trial_values": [
+    0.189353,
+    0.248406
+  ],
+  "mlflow_tuning_run_id": "88328f0ad40b423988b54c34fdb711ef",
+  "git_commit": "f8c1349",
+  "finalized_at": "2026-05-18T13:58:50.865003+00:00"
 }

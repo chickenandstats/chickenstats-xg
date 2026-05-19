@@ -1,11 +1,14 @@
 {
   "strength": "shorthanded",
   "tier": "base_xg",
-  "version": "1.0.0",
-  "optuna_study_name": "shorthanded-1.0.0-base",
-  "optuna_trial_number": 691,
-  "optuna_trial_value": 0.234788,
-  "mlflow_tuning_run_id": "23f63ae996a145f78dee7739cd902f67",
-  "git_commit": "df88baf",
-  "finalized_at": "2026-05-15T03:40:35.501101+00:00"
+  "version": "1.0.1",
+  "optuna_study_name": "shorthanded-1.0.1-base",
+  "optuna_trial_number": 1705,
+  "optuna_trial_values": [
+    0.241911,
+    0.208479
+  ],
+  "mlflow_tuning_run_id": "e75b892a2cbb4c16b367a11ecb287082",
+  "git_commit": "f8c1349",
+  "finalized_at": "2026-05-18T13:58:16.863855+00:00"
 }
