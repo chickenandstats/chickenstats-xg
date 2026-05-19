@@ -139,11 +139,11 @@ The EA regression is likely driven by trial selection: v1.0.0 trial #1160 had 20
 
 ### Latest Diagnostic
 
-**Date:** 2026-05-18 (refreshed — second finalization run same day)
+**Date:** 2026-05-18 (third finalization run — 2k additional trials per state)
 **Model version:** 1.0.1 (21-feature gbtree depth-2, no interaction constraints; Issues 18+20+21+22+23+24 applied)
-**Trials:** All studies complete under v1.0.1 constraints (lr ≤ 0.10, N_ESTIMATORS=100, EARLY_STOPPING_ROUNDS=20, lambda ceiling 500)
+**Trials:** ~4k+ per state; ES trial 350, PP trial 1556, SH trial 1851, EF trial 1772, EA trial 1803 (all v1.0.1 constraints: lr ≤ 0.10, N_ESTIMATORS=100, EARLY_STOPPING_ROUNDS=20, lambda ceiling 500)
 **Hold-out season:** 2024-25
-**Key changes from prior run:** Same constraints as first v1.0.1 finalization. Re-finalization selected different Optuna trials for PP (571→1556), SH (1017→1851), and EF (490→1772); ES and EA trials unchanged. SH PR-AUC improved 0.3460→0.3476; all other states stable (max Δ±0.0003). All PASS/FAIL/WARN outcomes unchanged.
+**Key changes from prior run:** 2k additional trials per state added. Same 5 trials selected as run 2 — no metric changes. Confirms run 2 selections are at or near the Pareto frontier for v1.0.1 constraints.
 
 ### Pass / Fail Summary
 
@@ -285,6 +285,7 @@ best_iter=10 (confirmed non-bimodal — low tree count at lr=0.0737 is correct b
 | 2026-05-18 | 1.0.0 | In progress — Issues 20+21 fixes applied | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD | Issue 20 fix: eval_metric changed to ["logloss","aucpr"] — aucpr now drives early stopping; logloss-based stopping caused best_iter=0 because logloss increases in early rounds with calibrated base_margin prior. Issue 21 fix: interaction_constraints removed from experiments.py and context_xg/finalize.py — binary flags (is_rebound, is_scramble, etc.) had zero feature importance due to isolated low-gain groups competing against the continuous block; max_depth=2 is sufficient structural protection. Features now 21 (added seconds_since_event_team_change, seconds_since_opp_team_change in prior session). Studies already re-running; these fixes take effect at finalize time. Update when re-finalized. |
 | 2026-05-18 | 1.0.1 | All 5 finalized (--top-n 15), run 1 | 0.3658 | 0.4140 | 0.3460 | 0.3862 | 0.7820 | +0.2083 | +0.2410 | +0.1552 | +0.2139 | +0.0283 | Issues 18+20+21+22+23+24 all applied.
 | 2026-05-18 | 1.0.1 | All 5 re-finalized (--top-n 15), run 2 | 0.3658 | 0.4139 | 0.3476 | 0.3859 | 0.7820 | +0.2083 | +0.2410 | +0.1568 | +0.2136 | +0.0283 | Refresh run (same constraints). PP: trial 571→1556 (lambda 44.8→13.1, lighter L2, mcw 106→141); SH: trial 1017→1851 (alpha 4.72→5.01, spw 2.08→2.47, PR-AUC +0.0016, OOF gap 0.0350→0.0345 ⚠️ WARN); EF: trial 490→1772 (gamma 6.76→8.10, alpha 0.32→3.63, OOF gap 0.0863→0.0897). ES and EA identical. All PASS/FAIL/WARN outcomes unchanged. Finalization complete. Key changes from Issues 22+23+24: `goal_fp` no longer a hard gate (replaced by `structural_flaw_penalty > struct_cap`); `_STRUCT_PENALTY_REL_CAP = 0.088` replaces absolute 0.02 cap (scales with null_ll across strength states); `_LOGIT_CAP = 4.0` prevents base_margin saturation for high-base_xg shots. ES calibration confirmed from scored parquet: 6,274 events context_xg ≥ 0.90 → 6,039 goals (96.3% actual rate); 4,947 events ≥ 0.95 → 4,857 goals (98.2%). EA: trial 1372 selected, struct_cap=0.0602, all 15 candidates passed. Run diagnose-context-xg for full per-state metrics. |
+| 2026-05-18 | 1.0.1 | All 5 re-finalized (--top-n 15), run 3 | 0.3658 | 0.4139 | 0.3476 | 0.3859 | 0.7820 | +0.2083 | +0.2410 | +0.1568 | +0.2136 | +0.0283 | 2k additional trials per state (~4k+ total per study). Same 5 trials selected as run 2 (ES 350, PP 1556, SH 1851, EF 1772, EA 1803). No metric changes. Confirms run 2 selections are at/near the Pareto frontier for v1.0.1 constraints. |
 
 ---
 
