@@ -33,3 +33,5 @@ chickenstats_xg/v1/data/pred_goal/hold_out/
 
 # Per-season full-cascade scored PBP — 100–222 MB per file, regenerate with score-pred-xg
 chickenstats_xg/v1/data/pred_goal/scored/
+.virtual_documents/**
+**/.ipynb_checkpoints/**
