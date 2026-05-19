@@ -2,65 +2,19 @@
   "objective": "binary:logistic",
   "booster": "gbtree",
   "random_state": 615,
-  "n_estimators": 500,
-  "early_stopping_rounds": 50,
+  "n_estimators": 100,
+  "early_stopping_rounds": 20,
   "max_depth": 2,
-  "interaction_constraints": [
-    [
-      "logit_base_xg",
-      "is_rebound"
-    ],
-    [
-      "logit_base_xg",
-      "is_scramble"
-    ],
-    [
-      "logit_base_xg",
-      "rush_attempt"
-    ],
-    [
-      "logit_base_xg",
-      "prior_face"
-    ],
-    [
-      "logit_base_xg",
-      "is_home"
-    ],
-    [
-      "logit_base_xg",
-      "position"
-    ],
-    [
-      "logit_base_xg",
-      "strength_state"
-    ],
-    [
-      "logit_base_xg",
-      "score_diff"
-    ],
-    [
-      "logit_base_xg",
-      "play_speed",
-      "seconds_since_last",
-      "distance_from_last",
-      "prior_event_angle",
-      "prior_event_distance",
-      "seconds_since_stoppage",
-      "period",
-      "period_seconds",
-      "prior_event_same",
-      "prior_event_opp"
-    ]
-  ],
   "eval_metric": [
-    "aucpr",
-    "logloss"
+    "logloss",
+    "aucpr"
   ],
   "max_delta_step": 1,
-  "min_child_weight": 443,
-  "gamma": 1.9974336839513414,
-  "lambda": 165.48093063815148,
-  "alpha": 0.35249847648919785,
-  "subsample": 0.75,
-  "learning_rate": 0.010270161077297215
+  "min_child_weight": 391,
+  "gamma": 8.97626144252098,
+  "lambda": 13.900137021292272,
+  "alpha": 1.3518595106891904,
+  "subsample": 0.8500000000000001,
+  "colsample_bytree": 0.55,
+  "learning_rate": 0.07367519242836353
 }

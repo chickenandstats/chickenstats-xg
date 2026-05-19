@@ -3,9 +3,12 @@
   "tier": "context_xg",
   "version": "1.0.1",
   "optuna_study_name": "empty_for-1.0.1-context",
-  "optuna_trial_number": 507,
-  "optuna_trial_value": 0.224037,
-  "mlflow_tuning_run_id": "d52b2ad9b0344671a119aa3892cf52e6",
-  "git_commit": "21aac51",
-  "finalized_at": "2026-05-16T05:10:41.725709+00:00"
+  "optuna_trial_number": 1772,
+  "optuna_trial_values": [
+    0.143819,
+    0.246515
+  ],
+  "mlflow_tuning_run_id": "f7216fa99e2d45c5b2c584d97d321e91",
+  "git_commit": "f8c1349",
+  "finalized_at": "2026-05-19T04:18:10.388589+00:00"
 }

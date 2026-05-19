@@ -3,9 +3,12 @@
   "tier": "context_xg",
   "version": "1.0.1",
   "optuna_study_name": "even_strength-1.0.1-context",
-  "optuna_trial_number": 346,
-  "optuna_trial_value": 0.183078,
-  "mlflow_tuning_run_id": "2234fc8ed69f4e83a8923da48689b08b",
-  "git_commit": "21aac51",
-  "finalized_at": "2026-05-16T05:05:26.746410+00:00"
+  "optuna_trial_number": 350,
+  "optuna_trial_values": [
+    0.140082,
+    0.209333
+  ],
+  "mlflow_tuning_run_id": "1bf2774886e64739814016ab69d3d717",
+  "git_commit": "f8c1349",
+  "finalized_at": "2026-05-19T04:16:41.501722+00:00"
 }
