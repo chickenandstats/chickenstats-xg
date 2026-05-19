@@ -44,9 +44,9 @@ from itertools import cycle
 # Named colors
 # ---------------------------------------------------------------------------
 
-YB_KEY = "#111111"       # structural emphasis only (diagonals, borders)
-LINE_COLOR = YB_KEY      # reference / best-fit lines
-DIMGRAY = "dimgray"      # axes chrome: text, ticks, labels, spines
+YB_KEY = "#111111"  # structural emphasis only (diagonals, borders)
+LINE_COLOR = YB_KEY  # reference / best-fit lines
+DIMGRAY = "dimgray"  # axes chrome: text, ticks, labels, spines
 
 # ---------------------------------------------------------------------------
 # Discrete palettes
@@ -54,21 +54,34 @@ DIMGRAY = "dimgray"      # axes chrome: text, ticks, labels, spines
 
 PALETTES: dict[str, list[str]] = {
     "yellowbrick": ["#0272a2", "#9fc377", "#ca0b03", "#a50258", "#d7c703", "#88cada"],
-    "accent":      ["#386cb0", "#7fc97f", "#f0027f", "#beaed4", "#ffff99", "#fdc086"],
-    "dark":        ["#7570b3", "#66a61e", "#d95f02", "#e7298a", "#e6ab02", "#1b9e77"],
-    "pastel":      ["#cbd5e8", "#b3e2cd", "#fdcdac", "#f4cae4", "#fff2ae", "#e6f5c9"],
-    "bold":        ["#377eb8", "#4daf4a", "#e41a1c", "#984ea3", "#ffff33", "#ff7f00"],
-    "muted":       ["#80b1d3", "#8dd3c7", "#fb8072", "#bebada", "#ffffb3", "#fdb462"],
-    "colorblind":  ["#0072B2", "#009E73", "#D55E00", "#CC79A7", "#F0E442", "#56B4E9"],
-    "flatui":      ["#34495e", "#2ecc71", "#e74c3c", "#9b59b6", "#f4d03f", "#3498db"],
-    "sns_deep":    ["#4C72B0", "#55A868", "#C44E52", "#8172B2", "#CCB974", "#64B5CD"],
-    "sns_muted":   ["#4878CF", "#6ACC65", "#D65F5F", "#B47CC7", "#C4AD66", "#77BEDB"],
-    "sns_pastel":  ["#92C6FF", "#97F0AA", "#FF9F9A", "#D0BBFF", "#FFFEA3", "#B0E0E6"],
-    "sns_bright":  ["#003FFF", "#03ED3A", "#E8000B", "#8A2BE2", "#FFC400", "#00D7FF"],
-    "sns_dark":    ["#001C7F", "#017517", "#8C0900", "#7600A1", "#B8860B", "#006374"],
-    "neural_paint":["#167192", "#6e7548", "#c5a2ab", "#00ccff", "#de78ae", "#ffcc99", "#3d3f42", "#ffffcc"],
-    "set1": ["#377eb8","#4daf4a","#e41a1c","#984ea3","#ffff33","#ff7f00","#a65628","#f781bf","#999999"],
-    "paired": ["#a6cee3","#1f78b4","#b2df8a","#33a02c","#fb9a99","#e31a1c","#cab2d6","#6a3d9a","#ffff99","#b15928","#fdbf6f","#ff7f00"],
+    "accent": ["#386cb0", "#7fc97f", "#f0027f", "#beaed4", "#ffff99", "#fdc086"],
+    "dark": ["#7570b3", "#66a61e", "#d95f02", "#e7298a", "#e6ab02", "#1b9e77"],
+    "pastel": ["#cbd5e8", "#b3e2cd", "#fdcdac", "#f4cae4", "#fff2ae", "#e6f5c9"],
+    "bold": ["#377eb8", "#4daf4a", "#e41a1c", "#984ea3", "#ffff33", "#ff7f00"],
+    "muted": ["#80b1d3", "#8dd3c7", "#fb8072", "#bebada", "#ffffb3", "#fdb462"],
+    "colorblind": ["#0072B2", "#009E73", "#D55E00", "#CC79A7", "#F0E442", "#56B4E9"],
+    "flatui": ["#34495e", "#2ecc71", "#e74c3c", "#9b59b6", "#f4d03f", "#3498db"],
+    "sns_deep": ["#4C72B0", "#55A868", "#C44E52", "#8172B2", "#CCB974", "#64B5CD"],
+    "sns_muted": ["#4878CF", "#6ACC65", "#D65F5F", "#B47CC7", "#C4AD66", "#77BEDB"],
+    "sns_pastel": ["#92C6FF", "#97F0AA", "#FF9F9A", "#D0BBFF", "#FFFEA3", "#B0E0E6"],
+    "sns_bright": ["#003FFF", "#03ED3A", "#E8000B", "#8A2BE2", "#FFC400", "#00D7FF"],
+    "sns_dark": ["#001C7F", "#017517", "#8C0900", "#7600A1", "#B8860B", "#006374"],
+    "neural_paint": ["#167192", "#6e7548", "#c5a2ab", "#00ccff", "#de78ae", "#ffcc99", "#3d3f42", "#ffffcc"],
+    "set1": ["#377eb8", "#4daf4a", "#e41a1c", "#984ea3", "#ffff33", "#ff7f00", "#a65628", "#f781bf", "#999999"],
+    "paired": [
+        "#a6cee3",
+        "#1f78b4",
+        "#b2df8a",
+        "#33a02c",
+        "#fb9a99",
+        "#e31a1c",
+        "#cab2d6",
+        "#6a3d9a",
+        "#ffff99",
+        "#b15928",
+        "#fdbf6f",
+        "#ff7f00",
+    ],
 }
 
 # ---------------------------------------------------------------------------
@@ -81,29 +94,29 @@ SEQUENCES: dict[str, dict[int, list[str]]] = {
         4: ["#ffffb2", "#fecc5c", "#fd8d3c", "#e31a1c"],
         5: ["#ffffb2", "#fecc5c", "#fd8d3c", "#f03b20", "#bd0026"],
         6: ["#ffffb2", "#fed976", "#feb24c", "#fd8d3c", "#f03b20", "#bd0026"],
-        7: ["#ffffb2","#fed976","#feb24c","#fd8d3c","#fc4e2a","#e31a1c","#b10026"],
-        8: ["#ffffcc","#ffeda0","#fed976","#feb24c","#fd8d3c","#fc4e2a","#e31a1c","#b10026"],
-        9: ["#ffffcc","#ffeda0","#fed976","#feb24c","#fd8d3c","#fc4e2a","#e31a1c","#bd0026","#800026"],
+        7: ["#ffffb2", "#fed976", "#feb24c", "#fd8d3c", "#fc4e2a", "#e31a1c", "#b10026"],
+        8: ["#ffffcc", "#ffeda0", "#fed976", "#feb24c", "#fd8d3c", "#fc4e2a", "#e31a1c", "#b10026"],
+        9: ["#ffffcc", "#ffeda0", "#fed976", "#feb24c", "#fd8d3c", "#fc4e2a", "#e31a1c", "#bd0026", "#800026"],
     },
     "RdPu": {
         3: ["#fde0dd", "#fa9fb5", "#c51b8a"],
         4: ["#feebe2", "#fbb4b9", "#f768a1", "#ae017e"],
         5: ["#feebe2", "#fbb4b9", "#f768a1", "#c51b8a", "#7a0177"],
         6: ["#feebe2", "#fcc5c0", "#fa9fb5", "#f768a1", "#c51b8a", "#7a0177"],
-        7: ["#feebe2","#fcc5c0","#fa9fb5","#f768a1","#dd3497","#ae017e","#7a0177"],
-        8: ["#fff7f3","#fde0dd","#fcc5c0","#fa9fb5","#f768a1","#dd3497","#ae017e","#7a0177"],
-        9: ["#fff7f3","#fde0dd","#fcc5c0","#fa9fb5","#f768a1","#dd3497","#ae017e","#7a0177","#49006a"],
+        7: ["#feebe2", "#fcc5c0", "#fa9fb5", "#f768a1", "#dd3497", "#ae017e", "#7a0177"],
+        8: ["#fff7f3", "#fde0dd", "#fcc5c0", "#fa9fb5", "#f768a1", "#dd3497", "#ae017e", "#7a0177"],
+        9: ["#fff7f3", "#fde0dd", "#fcc5c0", "#fa9fb5", "#f768a1", "#dd3497", "#ae017e", "#7a0177", "#49006a"],
     },
     "Blues": {
         3: ["#deebf7", "#9ecae1", "#3182bd"],
         5: ["#eff3ff", "#bdd7e7", "#6baed6", "#3182bd", "#08519c"],
-        9: ["#f7fbff","#deebf7","#c6dbef","#9ecae1","#6baed6","#4292c6","#2171b5","#08519c","#08306b"],
+        9: ["#f7fbff", "#deebf7", "#c6dbef", "#9ecae1", "#6baed6", "#4292c6", "#2171b5", "#08519c", "#08306b"],
     },
     "RdBu": {
-        9: ["#b2182b","#d6604d","#f4a582","#fddbc7","#f7f7f7","#d1e5f0","#92c5de","#4393c3","#2166ac"],
+        9: ["#b2182b", "#d6604d", "#f4a582", "#fddbc7", "#f7f7f7", "#d1e5f0", "#92c5de", "#4393c3", "#2166ac"],
     },
     "Greys": {
-        9: ["#ffffff","#f0f0f0","#d9d9d9","#bdbdbd","#969696","#737373","#525252","#252525","#000000"],
+        9: ["#ffffff", "#f0f0f0", "#d9d9d9", "#bdbdbd", "#969696", "#737373", "#525252", "#252525", "#000000"],
     },
 }
 
@@ -205,8 +218,18 @@ _DARK_STYLE: dict = {
 }
 
 # chickenstats dark palette (desaturated Brewer-ish set)
-_DARK_PALETTE = ["#8dd3c7", "#feffb3", "#bfbbd9", "#fa8174", "#81b1d2",
-                 "#fdb462", "#b3de69", "#bc82bd", "#ccebc4", "#ffed6f"]
+_DARK_PALETTE = [
+    "#8dd3c7",
+    "#feffb3",
+    "#bfbbd9",
+    "#fa8174",
+    "#81b1d2",
+    "#fdb462",
+    "#b3de69",
+    "#bc82bd",
+    "#ccebc4",
+    "#ffed6f",
+]
 
 _CONTEXT: dict = {
     "font.size": 12,
@@ -254,8 +277,14 @@ def set_style(
     base = _LIGHT_STYLE if theme == "light" else _DARK_STYLE
     params = {**base, **_CONTEXT}
 
-    font_keys = ["axes.labelsize", "axes.titlesize", "legend.fontsize",
-                 "xtick.labelsize", "ytick.labelsize", "font.size"]
+    font_keys = [
+        "axes.labelsize",
+        "axes.titlesize",
+        "legend.fontsize",
+        "xtick.labelsize",
+        "ytick.labelsize",
+        "font.size",
+    ]
     for k in font_keys:
         params[k] = params[k] * font_scale
 
@@ -363,10 +392,12 @@ def find_text_color(bg_hex: str, light: str = "white", dark: str = DIMGRAY) -> s
 # Imported at call time to avoid a hard import-time dependency; callers that
 # only use palettes/sequences/style need not have chickenstats installed.
 
+
 def _load_team_colors() -> dict[str, dict[str, str]]:
     """Lazy-load TEAM_COLORS from chickenstats, fall back to empty dict."""
     try:
         from chickenstats.chicken_nhl.team import TEAM_COLORS as _TC
+
         return _TC  # ty: ignore[return-value]
     except ImportError:
         return {}

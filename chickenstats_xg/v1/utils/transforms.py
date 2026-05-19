@@ -16,11 +16,11 @@ def apply_fixed_categoricals(X: pd.DataFrame, strength: str) -> pd.DataFrame:
     """Cast categorical columns to pd.Categorical with fixed category lists."""
     X = X.copy()
     cat_map = {
-        "shot_type":        SHOT_TYPES,
-        "position":         POSITIONS,
-        "strength_state":   STRENGTH_STATE_CATS[strength],
+        "shot_type": SHOT_TYPES,
+        "position": POSITIONS,
+        "strength_state": STRENGTH_STATE_CATS[strength],
         "prior_event_same": PRIOR_EVENT_TYPES,
-        "prior_event_opp":  PRIOR_EVENT_TYPES,
+        "prior_event_opp": PRIOR_EVENT_TYPES,
     }
     for col, cats in cat_map.items():
         if col in X.columns:

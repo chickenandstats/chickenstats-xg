@@ -1,11 +1,11 @@
 """Compute multi-window rolling GxG/GSAx talent metrics for the pred_goal pipeline.
 
 Input: combined scored parquets (all 5 strengths concatenated), sorted chronologically,
-containing 'base_xg', 'goal', 'player_1_api_id', 'opp_goalie_api_id',
+containing 'context_xg', 'goal', 'player_1_api_id', 'opp_goalie_api_id',
 'season', 'session', 'game_id'.
 
 All rows are already fenwick events (filtered by prep_data in process_data_base.py).
-Returns the input DataFrame with 16 rolling stat columns added.
+Returns the input DataFrame with 14 rolling stat columns added.
 """
 
 import polars as pl
@@ -18,7 +18,7 @@ EWMA_HALF_LIFE = 50  # shots until a past observation retains 50% weight
 
 
 def _event_level_stats(
-    df: pl.DataFrame, id_col: str, metric_expr: pl.Expr, stat_col: str, shots_col: str
+    df: pl.DataFrame, id_col: str, metric_expr: pl.Expr, stat_col: str
 ) -> pl.DataFrame:
     """Career and season-YTD cumulative GxG or GSAx with shift(1) leakage guard."""
     df = df.with_columns(
@@ -35,14 +35,12 @@ def _event_level_stats(
         .alias(f"{stat_col}_career"),
         # Bayesian shrinkage: divide by (shots + prior) so small samples regress toward zero
         (pl.col("_g") / (pl.col("_s") + PRIOR_SHOTS)).cast(pl.Float64).alias(f"{stat_col}_per_shot_career"),
-        pl.col("_s").cast(pl.Int64).alias(f"{shots_col}_career"),
         pl.when(pl.col("_ss") >= MIN_SHOTS)
         .then(pl.col("_sg"))
         .otherwise(None)
         .cast(pl.Float64)
         .alias(f"{stat_col}_season"),
         (pl.col("_sg") / (pl.col("_ss") + PRIOR_SHOTS)).cast(pl.Float64).alias(f"{stat_col}_per_shot_season"),
-        pl.col("_ss").cast(pl.Int64).alias(f"{shots_col}_season"),
     ).drop(["_g", "_s", "_sg", "_ss"])
 
 
@@ -62,7 +60,7 @@ def _ewma_stats(df: pl.DataFrame, id_col: str, metric_expr: pl.Expr, stat_col: s
 
 
 def _game_level_stats(
-    df: pl.DataFrame, id_col: str, metric_expr: pl.Expr, stat_col: str, shots_col: str
+    df: pl.DataFrame, id_col: str, metric_expr: pl.Expr, stat_col: str
 ) -> pl.DataFrame:
     """Last-10g GxG or GSAx via game-level aggregate and rolling window."""
     game = (
@@ -77,14 +75,12 @@ def _game_level_stats(
     return game.with_columns(
         pl.when(s10 > 0).then(g10).otherwise(None).cast(pl.Float64).alias(f"{stat_col}_10g"),
         pl.when(s10 > 0).then(g10 / s10).otherwise(None).cast(pl.Float64).alias(f"{stat_col}_per_shot_10g"),
-        s10.cast(pl.Int64).alias(f"{shots_col}_10g"),
     ).select(
         [
             id_col,
             "game_id",
             f"{stat_col}_10g",
             f"{stat_col}_per_shot_10g",
-            f"{shots_col}_10g",
         ]
     )
 
@@ -93,7 +89,7 @@ def compute_rolling_stats(scored: pl.DataFrame) -> pl.DataFrame:
     """Compute 4-window rolling GxG/GSAx on chronologically-sorted scored PBP.
 
     Input must be sorted by ['season', 'game_id', 'period', 'period_seconds'] and
-    contain: base_xg, goal, player_1_api_id, opp_goalie_api_id, season, session, game_id.
+    contain: context_xg, goal, player_1_api_id, opp_goalie_api_id, season, session, game_id.
 
     All rows are already fenwick events. Goalie stats exclude empty-net shots
     (rows where opp_goalie_api_id is null).
@@ -109,20 +105,20 @@ def compute_rolling_stats(scored: pl.DataFrame) -> pl.DataFrame:
     scored = scored.with_row_index("_row_idx")
     goalie_rows = scored.filter(pl.col(GOALIE_ID_COL).is_not_null())
 
-    shooter_metric = pl.col("goal") - pl.col("base_xg")
-    goalie_metric = pl.col("base_xg") - pl.col("goal")
+    shooter_metric = pl.col("goal") - pl.col("context_xg")
+    goalie_metric = pl.col("context_xg") - pl.col("goal")
 
     # Event-level career + season YTD (with Bayesian shrinkage on per-shot rates)
-    scored = _event_level_stats(scored, SHOOTER_ID_COL, shooter_metric, "shooter_gax", "shooter_shots")
-    goalie_rows = _event_level_stats(goalie_rows, GOALIE_ID_COL, goalie_metric, "goalie_gsax", "goalie_shots")
+    scored = _event_level_stats(scored, SHOOTER_ID_COL, shooter_metric, "shooter_gax")
+    goalie_rows = _event_level_stats(goalie_rows, GOALIE_ID_COL, goalie_metric, "goalie_gsax")
 
     # EWMA — exponentially weighted recent form
     scored = _ewma_stats(scored, SHOOTER_ID_COL, shooter_metric, "shooter_gax")
     goalie_rows = _ewma_stats(goalie_rows, GOALIE_ID_COL, goalie_metric, "goalie_gsax")
 
     # Game-level 10g + 1g
-    shooter_game = _game_level_stats(scored, SHOOTER_ID_COL, shooter_metric, "shooter_gax", "shooter_shots")
-    goalie_game = _game_level_stats(goalie_rows, GOALIE_ID_COL, goalie_metric, "goalie_gsax", "goalie_shots")
+    shooter_game = _game_level_stats(scored, SHOOTER_ID_COL, shooter_metric, "shooter_gax")
+    goalie_game = _game_level_stats(goalie_rows, GOALIE_ID_COL, goalie_metric, "goalie_gsax")
 
     scored = scored.join(shooter_game, on=[SHOOTER_ID_COL, "game_id"], how="left")
     goalie_rows = goalie_rows.join(goalie_game, on=[GOALIE_ID_COL, "game_id"], how="left")
@@ -131,13 +127,10 @@ def compute_rolling_stats(scored: pl.DataFrame) -> pl.DataFrame:
         "_row_idx",
         "goalie_gsax_career",
         "goalie_gsax_per_shot_career",
-        "goalie_shots_career",
         "goalie_gsax_season",
         "goalie_gsax_per_shot_season",
-        "goalie_shots_season",
         "goalie_gsax_10g",
         "goalie_gsax_per_shot_10g",
-        "goalie_shots_10g",
         "goalie_gsax_ewma",
     ]
 

@@ -137,9 +137,7 @@ def main():
 
     pbp_files = sorted(rapm_pbp_dir.glob("pbp_*.parquet"))
     if not pbp_files:
-        raise FileNotFoundError(
-            f"No enriched PBP parquets found in {rapm_pbp_dir}. Run rapm/prep_pbp.py first."
-        )
+        raise FileNotFoundError(f"No enriched PBP parquets found in {rapm_pbp_dir}. Run rapm/prep_pbp.py first.")
 
     # B2B metadata requires the full multi-season schedule
     all_pbp_lazy = pl.scan_parquet(pbp_files)

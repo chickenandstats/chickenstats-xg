@@ -1,4 +1,3 @@
-
 """RAPM regression quality diagnostic.
 
 Run from repo root:
@@ -44,12 +43,12 @@ FORWARD_POSITIONS = {"C", "L", "R", "LW", "RW", "W"}
 # Only flag FAIL when multiple extreme outliers suggest a data / regularisation issue.
 Z_WARN = 4.0
 Z_FAIL = 6.0
-Z_FAIL_COUNT = 5   # must have this many |z|>Z_FAIL to trigger FAIL
-Z_WARN_PCT   = 5.0 # % of player-seasons with |z|>Z_WARN to trigger WARN
+Z_FAIL_COUNT = 5  # must have this many |z|>Z_FAIL to trigger FAIL
+Z_WARN_PCT = 5.0  # % of player-seasons with |z|>Z_WARN to trigger WARN
 
 # YOY Pearson r thresholds (EV R consecutive seasons)
-YOY_LOW_FAIL  = 0.05
-YOY_LOW_WARN  = 0.15
+YOY_LOW_FAIL = 0.05
+YOY_LOW_WARN = 0.15
 YOY_HIGH_WARN = 0.70
 YOY_HIGH_FAIL = 0.85
 
@@ -65,6 +64,7 @@ def _icon(s: str) -> str:
 
 
 # ── Check 1: coefficient range / outliers ─────────────────────────────────────
+
 
 def check_coeff_range(df: pd.DataFrame, situation: str) -> str:
     sub = df[(df["session"] == "R") & (df["situation"] == situation) & (df["season"] != 0)]
@@ -85,7 +85,9 @@ def check_coeff_range(df: pd.DataFrame, situation: str) -> str:
 
     print(f"\n  ── Coefficient range ({situation} R — off_coeff_context_xg) ────────────────")
     print(f"     player-seasons: {len(vals):,}   mean: {vals.mean():.4f}   std: {vals.std():.4f}")
-    print(f"     min: {vals.min():.4f}   p1: {vals.quantile(0.01):.4f}   p99: {vals.quantile(0.99):.4f}   max: {vals.max():.4f}")
+    print(
+        f"     min: {vals.min():.4f}   p1: {vals.quantile(0.01):.4f}   p99: {vals.quantile(0.99):.4f}   max: {vals.max():.4f}"
+    )
     if len(zvals):
         print(f"     |z| > {Z_WARN}: {n_warn:,}  |z| > {Z_FAIL}: {n_fail:,}")
     print(f"  {_icon(status)} Coefficient range [{status}]")
@@ -93,6 +95,7 @@ def check_coeff_range(df: pd.DataFrame, situation: str) -> str:
 
 
 # ── Check 2: positional plausibility ──────────────────────────────────────────
+
 
 def check_positional(df: pd.DataFrame) -> str:
     sub = df[(df["session"] == "R") & (df["situation"] == "EV") & (df["season"] != 0)]
@@ -128,6 +131,7 @@ def check_positional(df: pd.DataFrame) -> str:
 
 # ── Check 3: YOY stability ────────────────────────────────────────────────────
 
+
 def check_yoy_stability(df: pd.DataFrame) -> str:
     sub = df[(df["session"] == "R") & (df["situation"] == "EV") & (df["season"] != 0)].copy()
     col = "off_coeff_context_xg"
@@ -158,9 +162,12 @@ def check_yoy_stability(df: pd.DataFrame) -> str:
         status = PASS
 
     diagnosis = (
-        "no talent signal (random)" if r < YOY_LOW_FAIL
-        else "weak signal — high turnover" if r < YOY_LOW_WARN
-        else "suspiciously stable (under-regularised?)" if r > YOY_HIGH_FAIL
+        "no talent signal (random)"
+        if r < YOY_LOW_FAIL
+        else "weak signal — high turnover"
+        if r < YOY_LOW_WARN
+        else "suspiciously stable (under-regularised?)"
+        if r > YOY_HIGH_FAIL
         else "healthy talent persistence"
     )
 
@@ -173,10 +180,9 @@ def check_yoy_stability(df: pd.DataFrame) -> str:
 
 # ── Check 4: pred_goal RAPM coverage ──────────────────────────────────────────
 
+
 def check_coverage() -> str:
-    strengths = [
-        "even_strength", "powerplay", "shorthanded", "empty_for", "empty_against"
-    ]
+    strengths = ["even_strength", "powerplay", "shorthanded", "empty_for", "empty_against"]
     rapm_col = "shooter_rapm_xg_off"
 
     print(f"\n  ── RAPM coverage in pred_goal train parquets ───────────────────────────")
@@ -209,10 +215,10 @@ def check_coverage() -> str:
 
 # ── Informational: leaderboard ─────────────────────────────────────────────────
 
+
 def show_leaderboard(df: pd.DataFrame, n: int = 10) -> None:
     career = df[
-        (df["session"] == "R") & (df["situation"] == "EV")
-        & (df["season"] == 0) & (df["toi_minutes"] >= 200)
+        (df["session"] == "R") & (df["situation"] == "EV") & (df["season"] == 0) & (df["toi_minutes"] >= 200)
     ].copy()
     col = "total_rapm_context_xg"
     if col not in career.columns:
@@ -226,17 +232,22 @@ def show_leaderboard(df: pd.DataFrame, n: int = 10) -> None:
     print(f"  {'Rank':>4}  {'Player':>10}  {'Pos':>3}  {'TOI_min':>8}  {'total_rapm':>10}")
 
     for i, row in career.head(n).iterrows():
-        print(f"  {i+1:>4}  {str(row['player']):>10}  {str(row['_pos_group']):>3}  "
-              f"{int(row['toi_minutes']):>8,}  {row[col]:>10.4f}")
+        print(
+            f"  {i+1:>4}  {str(row['player']):>10}  {str(row['_pos_group']):>3}  "
+            f"{int(row['toi_minutes']):>8,}  {row[col]:>10.4f}"
+        )
     print(f"  {'···':>4}")
     bottom = career.tail(n).iloc[::-1].reset_index(drop=True)
     for j, row in bottom.iterrows():
         rank = len(career) - n + j + 1
-        print(f"  {rank:>4}  {str(row['player']):>10}  {str(row['_pos_group']):>3}  "
-              f"{int(row['toi_minutes']):>8,}  {row[col]:>10.4f}")
+        print(
+            f"  {rank:>4}  {str(row['player']):>10}  {str(row['_pos_group']):>3}  "
+            f"{int(row['toi_minutes']):>8,}  {row[col]:>10.4f}"
+        )
 
 
 # ── Informational: per-season distribution ────────────────────────────────────
+
 
 def show_season_distribution(df: pd.DataFrame, situation: str) -> None:
     sub = df[(df["session"] == "R") & (df["situation"] == situation) & (df["season"] != 0)]
@@ -250,16 +261,24 @@ def show_season_distribution(df: pd.DataFrame, situation: str) -> None:
         s = sub[sub["season"] == season][col].dropna()
         if len(s) < 10:
             continue
-        print(f"  {season:>8}  {len(s):>6,}  {s.mean():>8.4f}  {s.std():>8.4f}  "
-              f"{s.quantile(0.01):>8.4f}  {s.quantile(0.99):>8.4f}")
+        print(
+            f"  {season:>8}  {len(s):>6,}  {s.mean():>8.4f}  {s.std():>8.4f}  "
+            f"{s.quantile(0.01):>8.4f}  {s.quantile(0.99):>8.4f}"
+        )
 
 
 # ── main ───────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="RAPM quality diagnostic")
-    parser.add_argument("--situation", "-s", choices=SITUATIONS, default="EV",
-                        help="Primary situation for coefficient range check (default: EV)")
+    parser.add_argument(
+        "--situation",
+        "-s",
+        choices=SITUATIONS,
+        default="EV",
+        help="Primary situation for coefficient range check (default: EV)",
+    )
     args = parser.parse_args()
 
     warnings.filterwarnings("ignore")
@@ -276,10 +295,10 @@ def main() -> None:
     df = pd.read_parquet(RAPM_PATH)
 
     statuses: dict[str, str] = {}
-    statuses["coeff_range"]  = check_coeff_range(df, args.situation)
-    statuses["positional"]   = check_positional(df)
+    statuses["coeff_range"] = check_coeff_range(df, args.situation)
+    statuses["positional"] = check_positional(df)
     statuses["yoy_stability"] = check_yoy_stability(df)
-    statuses["coverage"]     = check_coverage()
+    statuses["coverage"] = check_coverage()
 
     show_leaderboard(df)
     show_season_distribution(df, args.situation)
@@ -287,8 +306,8 @@ def main() -> None:
     print(f"\n{'=' * 62}")
     print(f"  Summary")
     print(f"{'─' * 62}")
-    checks  = ["coeff_range", "positional", "yoy_stability", "coverage"]
-    headers = ["coeff_range", "positional", "yoy_stab",     "coverage"]
+    checks = ["coeff_range", "positional", "yoy_stability", "coverage"]
+    headers = ["coeff_range", "positional", "yoy_stab", "coverage"]
     print(f"  {'Check':<20}  " + "  ".join(f"{h:>11}" for h in headers))
     row = "  ".join(f"{_icon(statuses.get(c, '—'))+'':>11}" for c in checks)
     print(f"  {'RAPM':<20}  {row}")

@@ -1,4 +1,3 @@
-
 """Score all PBP with the frozen context_xg gbtree model.
 
 Reads base_xg scored parquets (which contain calibrated base_xg + all sequence
@@ -51,8 +50,10 @@ def score_strength(
     df = pd.read_parquet(src_path)
 
     # Compute logit_base_xg — used as both base_margin (residual learning) and
-    # a feature (preserving interaction constraint groups).
-    logit_bm = logit(df["base_xg"].to_numpy())
+    # a feature (preserving interaction constraint groups). Clipped to ±4.0 to
+    # match process_data.py and prevent base_margin spikes for near-certain shots
+    # (e.g. empty_against point-blank) that would pin raw predictions at 1.0.
+    logit_bm = np.clip(logit(df["base_xg"].to_numpy()), -4.0, 4.0)
     df = df.assign(logit_base_xg=logit_bm)
 
     feat_cols = [c for c in CONTEXT_XG_FEATURE_COLUMNS if c in df.columns]
@@ -80,14 +81,14 @@ def score_strength(
     return True
 
 
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Score PBP with the frozen context_xg model.")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--strength", "-s", type=str, choices=STRENGTHS)
     group.add_argument("--all", "-a", action="store_true")
     parser.add_argument(
-        "--no-rapm", action="store_true",
+        "--no-rapm",
+        action="store_true",
         help="Skip RAPM PBP enrichment after scoring (only applies with --all).",
     )
     args = parser.parse_args()

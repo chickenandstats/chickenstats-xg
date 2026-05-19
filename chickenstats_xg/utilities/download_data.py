@@ -40,7 +40,7 @@ from chickenstats.utilities import ChickenProgress
 from dotenv import load_dotenv
 
 # Match upload_data.py: single-part only so ETag == MD5(file) for dedup.
-_TRANSFER_CONFIG = TransferConfig(multipart_threshold=5 * 1024 ** 3)
+_TRANSFER_CONFIG = TransferConfig(multipart_threshold=5 * 1024**3)
 
 # Adaptive retries + 5-min read timeout for R2 reliability.
 _CLIENT_CONFIG = Config(
@@ -50,15 +50,15 @@ _CLIENT_CONFIG = Config(
 )
 
 _REPO_ROOT = Path(__file__).parent.parent.parent
-_V1_DATA   = _REPO_ROOT / "chickenstats_xg" / "v1" / "data"
-_RAW_PBP   = _REPO_ROOT / "raw_data" / "pbp"
+_V1_DATA = _REPO_ROOT / "chickenstats_xg" / "v1" / "data"
+_RAW_PBP = _REPO_ROOT / "raw_data" / "pbp"
 
 _R2_PREFIXES: dict[str, str] = {
-    "raw_pbp":    "raw_data/pbp/",
-    "base_xg":    "v1/data/base_xg/",
+    "raw_pbp": "raw_data/pbp/",
+    "base_xg": "v1/data/base_xg/",
     "context_xg": "v1/data/context_xg/",
-    "pred_goal":  "v1/data/pred_goal/",
-    "rapm":       "v1/data/rapm/",
+    "pred_goal": "v1/data/pred_goal/",
+    "rapm": "v1/data/rapm/",
 }
 
 
@@ -121,43 +121,50 @@ def _download_prefix(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Download parquet data files from Cloudflare R2."
-    )
+    parser = argparse.ArgumentParser(description="Download parquet data files from Cloudflare R2.")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
-        "--all", "-a", action="store_true",
+        "--all",
+        "-a",
+        action="store_true",
         help="Download everything: raw PBP + all v1 data tiers.",
     )
     group.add_argument(
-        "--raw-pbp", action="store_true",
+        "--raw-pbp",
+        action="store_true",
         help="Download raw_data/pbp/ only.",
     )
     group.add_argument(
-        "--v1", nargs="+",
+        "--v1",
+        nargs="+",
         choices=["base_xg", "context_xg", "pred_goal", "rapm"],
         metavar="TIER",
         help="Download specific v1 data tier(s): base_xg context_xg pred_goal rapm",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Print what would be downloaded without downloading.",
     )
     args = parser.parse_args()
 
     load_dotenv()
 
-    endpoint  = os.environ.get("R2_ENDPOINT_URL", "").strip()
+    endpoint = os.environ.get("R2_ENDPOINT_URL", "").strip()
     access_key = os.environ.get("R2_ACCESS_KEY_ID", "").strip()
     secret_key = os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()
-    bucket    = os.environ.get("R2_BUCKET_NAME", "").strip()
+    bucket = os.environ.get("R2_BUCKET_NAME", "").strip()
 
-    missing = [k for k, v in [
-        ("R2_ENDPOINT_URL", endpoint),
-        ("R2_ACCESS_KEY_ID", access_key),
-        ("R2_SECRET_ACCESS_KEY", secret_key),
-        ("R2_BUCKET_NAME", bucket),
-    ] if not v]
+    missing = [
+        k
+        for k, v in [
+            ("R2_ENDPOINT_URL", endpoint),
+            ("R2_ACCESS_KEY_ID", access_key),
+            ("R2_SECRET_ACCESS_KEY", secret_key),
+            ("R2_BUCKET_NAME", bucket),
+        ]
+        if not v
+    ]
     if missing:
         print(f"Missing env vars: {', '.join(missing)}", file=sys.stderr)
         sys.exit(1)

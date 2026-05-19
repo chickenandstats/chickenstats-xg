@@ -1,4 +1,3 @@
-
 """base_xg overfitting / calibration diagnostic.
 
 Run from repo root:
@@ -25,8 +24,11 @@ from pathlib import Path as _Path
 
 from chickenstats_xg.v1.config import STRENGTHS
 from chickenstats_xg.v1.utils.diagnose_utils import (
-    PASS, WARN, FAIL,
-    status_icon, pct,
+    PASS,
+    WARN,
+    FAIL,
+    status_icon,
+    pct,
     check_calibration,
     check_precision_recall_balance,
     check_oof_vs_holdout,
@@ -37,7 +39,7 @@ from chickenstats_xg.v1.utils.diagnose_utils import (
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 _BASE = _Path(__file__).parent.parent
-DATA_DIR   = _BASE / "data"   / "base_xg"
+DATA_DIR = _BASE / "data" / "base_xg"
 MODELS_DIR = _BASE / "models" / "base_xg"
 
 # ── thresholds ─────────────────────────────────────────────────────────────────
@@ -47,11 +49,19 @@ HIGH_CONF = 0.80
 HIGH_CONF_GOAL_WARN = 10.0
 HIGH_CONF_GOAL_FAIL = 20.0
 HIGH_CONF_SHOT_WARN = 1.0
+_BASE_RATE_REF = 0.07  # even_strength reference; thresholds scale for high-base-rate states
 
-GEOMETRY_FEATURES: frozenset[str] = frozenset([
-    "event_distance", "event_angle", "coords_x", "coords_y",
-    "abs_y_distance", "danger", "high_danger",
-])
+GEOMETRY_FEATURES: frozenset[str] = frozenset(
+    [
+        "event_distance",
+        "event_angle",
+        "coords_x",
+        "coords_y",
+        "abs_y_distance",
+        "danger",
+        "high_danger",
+    ]
+)
 GAIN_TOP_N = 10
 GAIN_DOMINANT_WARN = 0.40
 GAIN_DOMINANT_FAIL = 0.60
@@ -60,6 +70,7 @@ _PR_FIX = "check max_depth and min_child_weight; raise lambda floor"
 
 
 # ── Check 1: GOAL vs SHOT distribution ────────────────────────────────────────
+
 
 def check_distribution(df: pd.DataFrame, strength: str) -> tuple[str, float]:
     """GOAL vs SHOT percentile table + p90 ratio verdict."""
@@ -94,10 +105,21 @@ def check_distribution(df: pd.DataFrame, strength: str) -> tuple[str, float]:
 
 # ── Check 2: high-confidence event rate ───────────────────────────────────────
 
+
 def check_high_confidence(df: pd.DataFrame) -> str:
-    """% of events above HIGH_CONF threshold, split by GOAL / SHOT."""
+    """% of events above HIGH_CONF threshold, split by GOAL / SHOT.
+
+    Thresholds scale with base rate so high-base-rate states (e.g. empty_against)
+    are not penalised for naturally elevated predictions.
+    """
     n_goals = (df.goal == 1).sum()
     n_shots = (df.goal == 0).sum()
+    base_rate = n_goals / (n_goals + n_shots) if (n_goals + n_shots) > 0 else 0.0
+
+    scale = max(1.0, base_rate / _BASE_RATE_REF)
+    adj_goal_warn = min(HIGH_CONF_GOAL_WARN * scale, 50.0)
+    adj_goal_fail = min(HIGH_CONF_GOAL_FAIL * scale, 80.0)
+    adj_shot_warn = min(HIGH_CONF_SHOT_WARN * scale, 10.0)
 
     high_goals = ((df.goal == 1) & (df.base_xg > HIGH_CONF)).sum()
     high_shots = ((df.goal == 0) & (df.base_xg > HIGH_CONF)).sum()
@@ -105,8 +127,8 @@ def check_high_confidence(df: pd.DataFrame) -> str:
     pct_g = pct(high_goals, n_goals)
     pct_s = pct(high_shots, n_shots)
 
-    goal_status = PASS if pct_g < HIGH_CONF_GOAL_WARN else (WARN if pct_g < HIGH_CONF_GOAL_FAIL else FAIL)
-    shot_status = PASS if pct_s < HIGH_CONF_SHOT_WARN else WARN
+    goal_status = PASS if pct_g < adj_goal_warn else (WARN if pct_g < adj_goal_fail else FAIL)
+    shot_status = PASS if pct_s < adj_shot_warn else WARN
     overall = FAIL if FAIL in (goal_status, shot_status) else (WARN if WARN in (goal_status, shot_status) else PASS)
 
     print(f"\n  High-confidence events (base_xg > {HIGH_CONF})")
@@ -117,9 +139,11 @@ def check_high_confidence(df: pd.DataFrame) -> str:
 
 # ── Check 5: PR-AUC by season ─────────────────────────────────────────────────
 
+
 def check_season_prauc(scored_df: pd.DataFrame) -> None:
     """PR-AUC broken out by season. No pass/fail — informational only."""
     from sklearn.metrics import average_precision_score
+
     print(f"\n  PR-AUC by season")
     print(f"  {'Season':>8}  {'n_shots':>9}  {'n_goals':>9}  {'goal%':>7}  {'PR-AUC':>8}")
     for season in sorted(scored_df.season.unique()):
@@ -134,6 +158,7 @@ def check_season_prauc(scored_df: pd.DataFrame) -> None:
 
 
 # ── Check 6: feature gain dominance ───────────────────────────────────────────
+
 
 def check_feature_dominance(strength: str) -> str:
     """Gain distribution across features — flags contextual memorisation."""
@@ -183,49 +208,56 @@ def check_feature_dominance(strength: str) -> str:
 
 # ── Check 7: hyperparameter assessment ────────────────────────────────────────
 
+
 def check_hyperparameters(strength: str) -> None:
     """Extract hyperparameters from the frozen base_xg booster and opine on their appropriateness."""
     import json as _json
+
     model_path = MODELS_DIR / strength / "model.ubj"
-    meta_path  = MODELS_DIR / strength / "meta.json"
+    meta_path = MODELS_DIR / strength / "meta.json"
 
     params = extract_model_hyperparams(model_path)
     if params is None:
         print(f"\n  Hyperparameters: model not found at {model_path} — skip")
         return
 
-    trial_num = trial_val = None
+    trial_num = trial_vals = None
     if meta_path.exists():
         meta = _json.loads(meta_path.read_text())
-        trial_num = meta.get("trial_num")
-        trial_val = meta.get("trial_value")
+        trial_num = meta.get("optuna_trial_number")
+        trial_vals = meta.get("optuna_trial_values")
 
     print(f"\n  Hyperparameters (from saved booster + meta.json)")
     if trial_num is not None:
-        tv_str = f"  (CV PR-AUC: {trial_val:.4f})" if trial_val is not None else ""
+        if trial_vals is not None:
+            tv_str = f"  (PR-AUC: {trial_vals[0]:.4f}  log-loss: {trial_vals[1]:.4f})"
+        else:
+            tv_str = ""
         print(f"    Optuna trial {trial_num}{tv_str}")
 
     rows = [
-        ("max_depth",         params["max_depth"]),
-        ("min_child_weight",  params["min_child_weight"]),
-        ("max_delta_step",    params["max_delta_step"]),
+        ("max_depth", params["max_depth"]),
+        ("min_child_weight", params["min_child_weight"]),
+        ("max_delta_step", params["max_delta_step"]),
         ("eta (learning_rate)", params["eta"]),
-        ("gamma",             params["gamma"]),
-        ("lambda",            params["lambda_"]),
-        ("alpha",             params["alpha"]),
-        ("subsample",         params["subsample"]),
-        ("colsample_bytree",  params["colsample_bytree"]),
+        ("gamma", params["gamma"]),
+        ("lambda", params["lambda_"]),
+        ("alpha", params["alpha"]),
+        ("subsample", params["subsample"]),
+        ("colsample_bytree", params["colsample_bytree"]),
         ("colsample_bylevel", params["colsample_bylevel"]),
-        ("scale_pos_weight",  params["scale_pos_weight"]),
-        ("best_iteration",    params["best_iteration"]),
-        ("n_trees",           params["n_trees"]),
+        ("scale_pos_weight", params["scale_pos_weight"]),
+        ("best_iteration", params["best_iteration"]),
+        ("n_trees", params["n_trees"]),
     ]
     print(f"  {'Parameter':<24}  {'Value':>10}")
     for name, val in rows:
         if val is None:
             continue
-        val_str = f"{int(val)}" if isinstance(val, float) and val == int(val) else (
-            f"{val:.4f}" if isinstance(val, float) else str(val)
+        val_str = (
+            f"{int(val)}"
+            if isinstance(val, float) and val == int(val)
+            else (f"{val:.4f}" if isinstance(val, float) else str(val))
         )
         print(f"  {name:<24}  {val_str:>10}")
 
@@ -237,15 +269,21 @@ def check_hyperparameters(strength: str) -> None:
     nt = params["n_trees"]
 
     if md is not None and md >= 6:
-        issues.append("WARN  max_depth at cap (6) — marginal fingerprinting risk; confirm feature gain shows geometry dominance")
+        issues.append(
+            "WARN  max_depth at cap (6) — marginal fingerprinting risk; confirm feature gain shows geometry dominance"
+        )
     if mcw is not None and mcw < 30:
         issues.append(f"WARN  min_child_weight={int(mcw)} below floor of 30 — leaf-size risk at ~8% positive rate")
     if lam is not None and lam < 0.15:
         issues.append(f"WARN  lambda={lam:.4f} — very light L2 regularisation; leaf weights may inflate")
     if bi is not None and nt is not None and bi >= nt - 10:
-        issues.append(f"INFO  best_iteration={bi} near n_trees limit — early stopping may not have fired; consider n_estimators > 500")
+        issues.append(
+            f"INFO  best_iteration={bi} near n_trees limit — early stopping may not have fired; consider n_estimators > 500"
+        )
     if bi is not None and bi < 20:
-        issues.append(f"INFO  best_iteration={bi} — very early convergence; model may be over-regularised or data volume is low")
+        issues.append(
+            f"INFO  best_iteration={bi} — very early convergence; model may be over-regularised or data volume is low"
+        )
 
     print()
     if issues:
@@ -256,6 +294,7 @@ def check_hyperparameters(strength: str) -> None:
 
 
 # ── Check 8: hold-out performance metrics ─────────────────────────────────────
+
 
 def check_holdout_metrics(
     strength: str,
@@ -285,6 +324,7 @@ def check_holdout_metrics(
 
 # ── main ───────────────────────────────────────────────────────────────────────
 
+
 def run_strength(strength: str) -> tuple[dict[str, str], dict[str, float]]:
     scored_path = DATA_DIR / "scored" / f"{strength}.parquet"
     if not scored_path.exists():
@@ -293,23 +333,23 @@ def run_strength(strength: str) -> tuple[dict[str, str], dict[str, float]]:
 
     df = pd.read_parquet(scored_path, columns=["game_id", "event_idx", "goal", "base_xg", "season"])
 
-    dist_status, _  = check_distribution(df, strength)
-    hc_status       = check_high_confidence(df)
-    pr_status       = check_precision_recall_balance(df, "base_xg", fix_message=_PR_FIX)
-    cal_status      = check_calibration(df, "base_xg")
+    dist_status, _ = check_distribution(df, strength)
+    hc_status = check_high_confidence(df)
+    pr_status = check_precision_recall_balance(df, "base_xg", fix_message=_PR_FIX)
+    cal_status = check_calibration(df, "base_xg")
     oof_status, oof_gap = check_oof_vs_holdout(strength, df, "base_xg", DATA_DIR, MODELS_DIR)
-    gain_status     = check_feature_dominance(strength)
+    gain_status = check_feature_dominance(strength)
     check_season_prauc(df)
     check_hyperparameters(strength)
     metrics = check_holdout_metrics(strength, df, oof_gap=oof_gap)
 
     statuses = {
-        "distribution":   dist_status,
+        "distribution": dist_status,
         "high_confidence": hc_status,
-        "pr_balance":     pr_status,
-        "calibration":    cal_status,
+        "pr_balance": pr_status,
+        "calibration": cal_status,
         "oof_vs_holdout": oof_status,
-        "feature_gain":   gain_status,
+        "feature_gain": gain_status,
     }
     overall = FAIL if FAIL in statuses.values() else (WARN if WARN in statuses.values() else PASS)
     print(f"\n  {status_icon(overall)} Overall [{strength}]: {overall}")
@@ -318,15 +358,16 @@ def run_strength(strength: str) -> tuple[dict[str, str], dict[str, float]]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="base_xg overfitting diagnostic")
-    parser.add_argument("--strength", "-s", choices=STRENGTHS, default=None,
-                        help="Single strength state (default: all 5)")
+    parser.add_argument(
+        "--strength", "-s", choices=STRENGTHS, default=None, help="Single strength state (default: all 5)"
+    )
     args = parser.parse_args()
 
     warnings.filterwarnings("ignore")
 
     strengths = [args.strength] if args.strength else STRENGTHS
     all_statuses: dict[str, dict[str, str]] = {}
-    all_metrics:  dict[str, dict[str, float]] = {}
+    all_metrics: dict[str, dict[str, float]] = {}
 
     print("=" * 62)
     print("  base_xg overfitting / calibration diagnostic")
@@ -335,14 +376,14 @@ def main() -> None:
     for s in strengths:
         statuses, metrics = run_strength(s)
         all_statuses[s] = statuses
-        all_metrics[s]  = metrics
+        all_metrics[s] = metrics
 
     # Pass/fail summary table
     print(f"\n{'=' * 62}")
     print(f"  Summary")
     print(f"{'─' * 62}")
-    checks  = ["distribution", "high_confidence", "pr_balance", "calibration", "oof_vs_holdout", "feature_gain"]
-    headers = ["distribut",    "high_conf",        "pr_bal",     "calibrat",    "oof_gap",        "feat_gain"]
+    checks = ["distribution", "high_confidence", "pr_balance", "calibration", "oof_vs_holdout", "feature_gain"]
+    headers = ["distribut", "high_conf", "pr_bal", "calibrat", "oof_gap", "feat_gain"]
     print(f"  {'Strength':<20}  " + "  ".join(f"{h:>9}" for h in headers))
     for s, statuses in all_statuses.items():
         if not statuses:

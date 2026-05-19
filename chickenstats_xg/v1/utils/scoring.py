@@ -1,4 +1,3 @@
-
 """Shared scoring helpers for base_xg and context_xg score.py."""
 
 from pathlib import Path

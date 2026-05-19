@@ -42,7 +42,7 @@ from dotenv import load_dotenv
 
 # Force single-part uploads so ETag == MD5(file) always.
 # Multipart ETags are composite hashes (md5_part1+...+"-N") and would break dedup.
-_TRANSFER_CONFIG = TransferConfig(multipart_threshold=5 * 1024 ** 3)
+_TRANSFER_CONFIG = TransferConfig(multipart_threshold=5 * 1024**3)
 
 # Adaptive retries handle R2 connection resets; 5-min read timeout covers large files.
 _CLIENT_CONFIG = Config(
@@ -52,16 +52,16 @@ _CLIENT_CONFIG = Config(
 )
 
 _REPO_ROOT = Path(__file__).parent.parent.parent
-_V1_DATA   = _REPO_ROOT / "chickenstats_xg" / "v1" / "data"
-_RAW_PBP   = _REPO_ROOT / "raw_data" / "pbp"
+_V1_DATA = _REPO_ROOT / "chickenstats_xg" / "v1" / "data"
+_RAW_PBP = _REPO_ROOT / "raw_data" / "pbp"
 
 # Data directories keyed by logical name
 _DATA_DIRS: dict[str, Path] = {
-    "raw_pbp":   _RAW_PBP,
-    "base_xg":   _V1_DATA / "base_xg",
+    "raw_pbp": _RAW_PBP,
+    "base_xg": _V1_DATA / "base_xg",
     "context_xg": _V1_DATA / "context_xg",
     "pred_goal": _V1_DATA / "pred_goal",
-    "rapm":      _V1_DATA / "rapm",
+    "rapm": _V1_DATA / "rapm",
 }
 
 
@@ -123,29 +123,30 @@ def _upload_dir(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Upload parquet data files to Cloudflare R2."
-    )
+    parser = argparse.ArgumentParser(description="Upload parquet data files to Cloudflare R2.")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
-        "--all", "-a", action="store_true",
+        "--all",
+        "-a",
+        action="store_true",
         help="Upload everything: raw PBP + all v1 data tiers.",
     )
     group.add_argument(
-        "--raw-pbp", action="store_true",
+        "--raw-pbp",
+        action="store_true",
         help="Upload raw_data/pbp/ only.",
     )
     group.add_argument(
-        "--v1", nargs="+",
+        "--v1",
+        nargs="+",
         choices=["base_xg", "context_xg", "pred_goal", "rapm"],
         metavar="TIER",
         help="Upload specific v1 data tier(s): base_xg context_xg pred_goal rapm",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Print what would be uploaded without uploading.",
-    )
-    parser.add_argument(
     )
     args = parser.parse_args()
 
@@ -156,12 +157,16 @@ def main() -> None:
     secret_key = os.environ.get("R2_SECRET_ACCESS_KEY", "").strip()
     bucket = os.environ.get("R2_BUCKET_NAME", "").strip()
 
-    missing = [k for k, v in [
-        ("R2_ENDPOINT_URL", endpoint),
-        ("R2_ACCESS_KEY_ID", access_key),
-        ("R2_SECRET_ACCESS_KEY", secret_key),
-        ("R2_BUCKET_NAME", bucket),
-    ] if not v]
+    missing = [
+        k
+        for k, v in [
+            ("R2_ENDPOINT_URL", endpoint),
+            ("R2_ACCESS_KEY_ID", access_key),
+            ("R2_SECRET_ACCESS_KEY", secret_key),
+            ("R2_BUCKET_NAME", bucket),
+        ]
+        if not v
+    ]
     if missing:
         print(f"Missing env vars: {', '.join(missing)}", file=sys.stderr)
         sys.exit(1)

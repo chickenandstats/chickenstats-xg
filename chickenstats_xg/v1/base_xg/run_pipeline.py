@@ -1,9 +1,14 @@
-"""Orchestrate the base_xg finalize → score → context_xg data prep pipeline.
+"""Orchestrate the base_xg process → finalize → score → context_xg data prep pipeline.
 
-Runs three steps in sequence:
+Runs four steps in sequence:
+  0. base_xg/process_data.py   — rebuild train/hold_out parquets from raw PBP
   1. base_xg/finalize.py       — retrain and freeze best base_xg models (all 5 strengths)
   2. base_xg/score.py          — score raw PBP + enrich RAPM PBP with base_xg
   3. context_xg/process_data.py — split base_xg scored parquets into context_xg train/hold_out
+
+Step 0 ensures train/hold_out parquets are current before finalize reads from them.
+Without it, finalize writes scored parquets from stale train/hold_out data and any
+features added to shot_features.py will be missing from the scored output.
 
 After this pipeline completes, run experiments.py for each context_xg strength state, then:
   - context_xg/run_pipeline.py --version 1.0.0 --no-log
@@ -21,11 +26,14 @@ Usage:
     # Limit scoring to specific seasons
     uv run python 1_0_0/base_xg/run_pipeline.py --version 1.0.0 --years 2023 2024 2025
 
+    # Resume: process already ran, start from finalize
+    uv run python 1_0_0/base_xg/run_pipeline.py --version 1.0.0 --skip-process-base
+
     # Resume: finalize already ran, start from base_xg scoring
-    uv run python 1_0_0/base_xg/run_pipeline.py --version 1.0.0 --skip-finalize
+    uv run python 1_0_0/base_xg/run_pipeline.py --version 1.0.0 --skip-process-base --skip-finalize
 
     # Resume: finalize and score done, only run context_xg data prep
-    uv run python 1_0_0/base_xg/run_pipeline.py --version 1.0.0 --skip-finalize --skip-score
+    uv run python 1_0_0/base_xg/run_pipeline.py --version 1.0.0 --skip-process-base --skip-finalize --skip-score
 """
 
 import argparse
@@ -55,26 +63,48 @@ def _run(cmd: list[str], label: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Run base_xg finalize → score → context_xg data prep pipeline."
+    parser = argparse.ArgumentParser(description="Run base_xg finalize → score → context_xg data prep pipeline.")
+    parser.add_argument(
+        "--version", "-v", required=True, help="Model version string passed to finalize.py (e.g. 1.0.0)"
     )
-    parser.add_argument("--version", "-v", required=True,
-                        help="Model version string passed to finalize.py (e.g. 1.0.0)")
-    parser.add_argument("--years", "-y", type=int, nargs="+",
-                        help="Season end-years to score (e.g. 2023 2024 2025). Default: all.")
-    parser.add_argument("--no-log", action="store_true",
-                        help="Pass --no-log to finalize.py (skip MLflow / SHAP).")
-    parser.add_argument("--top-n", "-n", type=int, default=15,
-                        help="Number of top CV PR-AUC trials to screen by calibrated hold-out log loss (default: 15).")
-    parser.add_argument("--skip-finalize", action="store_true",
-                        help="Skip step 1 (base_xg finalize). Use if models already frozen.")
-    parser.add_argument("--skip-score", action="store_true",
-                        help="Skip step 2 (base_xg score + RAPM PBP). Use if scored parquets exist.")
-    parser.add_argument("--skip-process", action="store_true",
-                        help="Skip step 3 (context_xg/process_data.py). Use if context_xg train/hold_out already split.")
+    parser.add_argument(
+        "--years", "-y", type=int, nargs="+", help="Season end-years to score (e.g. 2023 2024 2025). Default: all."
+    )
+    parser.add_argument("--no-log", action="store_true", help="Pass --no-log to finalize.py (skip MLflow / SHAP).")
+    parser.add_argument(
+        "--top-n",
+        "-n",
+        type=int,
+        default=15,
+        help="Number of top CV PR-AUC trials to screen by calibrated hold-out log loss (default: 15).",
+    )
+    parser.add_argument(
+        "--skip-process-base",
+        action="store_true",
+        help="Skip step 0 (base_xg/process_data.py). Use if train/hold_out parquets are already current.",
+    )
+    parser.add_argument(
+        "--skip-finalize", action="store_true", help="Skip step 1 (base_xg finalize). Use if models already frozen."
+    )
+    parser.add_argument(
+        "--skip-score",
+        action="store_true",
+        help="Skip step 2 (base_xg score + RAPM PBP). Use if scored parquets exist.",
+    )
+    parser.add_argument(
+        "--skip-process",
+        action="store_true",
+        help="Skip step 3 (context_xg/process_data.py). Use if context_xg train/hold_out already split.",
+    )
     args = parser.parse_args()
 
     py = sys.executable
+
+    # ── Step 0: rebuild base_xg train/hold_out from raw PBP ───────────────────
+    if not args.skip_process_base:
+        _run([py, str(_HERE / "process_data.py")], "Step 0 — base_xg process data")
+    else:
+        print("\n  Skipping step 0 (base_xg process data)")
 
     # ── Step 1: finalize base_xg ───────────────────────────────────────────────
     if not args.skip_finalize:
@@ -103,8 +133,8 @@ def main() -> None:
 
     print(f"\n{'=' * 62}")
     print("  Pipeline complete.")
-    print("  Next: run experiments.py for each context_xg strength state,")
-    print("        then: uv run python 1_0_0/context_xg/run_pipeline.py --version", args.version)
+    print("  Next: run tune-context-xg for each strength state,")
+    print("        then: uv run python chickenstats_xg/v1/context_xg/run_pipeline.py --version", args.version)
     print(f"{'=' * 62}\n")
 
 

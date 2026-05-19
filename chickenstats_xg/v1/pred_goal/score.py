@@ -1,5 +1,4 @@
-
-"""Score raw PBP with the finalized pred_goal model (base_xg cascade).
+"""Score raw PBP with the finalized pred_goal model (context_xg cascade).
 
 Training shots use the OOF predictions saved by finalize.py to avoid the
 in-sample bias of scoring a model on its own training data. Hold-out shots
@@ -11,7 +10,7 @@ TimeSeriesSplit validation set) fall back to the final model.
 Output:
     1_0_0/data/pred_goal/scored/pbp_{year}.parquet  — one file per NHL season
 
-Non-fenwick events have NaN for both base_xg and pred_goal.
+Non-fenwick events have NaN for both context_xg and pred_goal.
 
 Usage:
     python pred_goal/score.py
@@ -34,18 +33,18 @@ from chickenstats_xg.v1.utils.transforms import apply_fixed_categoricals, logit
 NON_FEATURE_COLS = ["goal", "season"] + PASSTHROUGH_COLS
 
 # Columns in raw PBP replaced by fresh model scores.
-_STALE_XG_COLS = {"base_xg", "pred_goal", "pred_goal_adj"}
+_STALE_XG_COLS = {"base_xg", "context_xg", "pred_goal", "pred_goal_adj"}
 
 
 def _split_df(df: pd.DataFrame, strength: str) -> tuple[pd.DataFrame, pd.Series, np.ndarray | None]:
     """Return (X_features, y, base_margin_or_None), mirroring finalize.py."""
     y = df["goal"].copy()
     bm: np.ndarray | None = None
-    if "base_xg" in df.columns:
-        bm = logit(df["base_xg"].to_numpy())
+    if "context_xg" in df.columns:
+        bm = logit(df["context_xg"].to_numpy())
     drop = [c for c in NON_FEATURE_COLS if c in df.columns]
-    if "base_xg" in df.columns and "base_xg" not in drop:
-        drop = drop + ["base_xg"]
+    if "context_xg" in df.columns and "context_xg" not in drop:
+        drop = drop + ["context_xg"]
     X = apply_fixed_categoricals(df.drop(columns=drop), strength)
     return X, y, bm
 
@@ -67,7 +66,7 @@ def _score_strengths(
     models_dir: Path,
     strengths: list[str],
 ) -> pd.DataFrame:
-    """Return DataFrame with (game_id, event_idx, base_xg, pred_goal) for all strengths.
+    """Return DataFrame with (game_id, event_idx, context_xg, pred_goal) for all strengths.
 
     Training shots use OOF predictions (unbiased). Hold-out shots and the
     small earliest-fold portion without OOF coverage use the final model.
@@ -94,7 +93,7 @@ def _score_strengths(
 
             # --- Training shots: prefer OOF predictions ---
             train_df = pd.read_parquet(pred_goal_dir / "train" / f"{strength}.parquet")
-            train_scores = train_df[["game_id", "event_idx", "base_xg"]].reset_index(drop=True).copy()
+            train_scores = train_df[["game_id", "event_idx", "context_xg"]].reset_index(drop=True).copy()
 
             if oof_path.exists():
                 oof_df = pd.read_parquet(oof_path)
@@ -110,12 +109,14 @@ def _score_strengths(
 
             # --- Hold-out shots: final model is unbiased here ---
             hold_df = pd.read_parquet(pred_goal_dir / "hold_out" / f"{strength}.parquet")
-            hold_scores = hold_df[["game_id", "event_idx", "base_xg"]].reset_index(drop=True).copy()
+            hold_scores = hold_df[["game_id", "event_idx", "context_xg"]].reset_index(drop=True).copy()
             hold_scores["pred_goal"] = _model_predict(model, calibrator, hold_df, strength)
 
             combined = pd.concat(
-                [train_scores[["game_id", "event_idx", "base_xg", "pred_goal"]],
-                 hold_scores[["game_id", "event_idx", "base_xg", "pred_goal"]]],
+                [
+                    train_scores[["game_id", "event_idx", "context_xg", "pred_goal"]],
+                    hold_scores[["game_id", "event_idx", "context_xg", "pred_goal"]],
+                ],
                 ignore_index=True,
             )
             frames.append(combined)
@@ -136,13 +137,16 @@ def _score_strengths(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Score raw PBP with finalized pred_goal models.")
     parser.add_argument(
-        "--years", "-y", type=int, nargs="+",
+        "--years",
+        "-y",
+        type=int,
+        nargs="+",
         help="NHL season end-years to include (e.g. 2024 for 2023-24). Defaults to all available.",
     )
     args = parser.parse_args()
 
     base_dir = Path(__file__).parent.parent
-    raw_dir = base_dir.parent / "raw_data" / "pbp"
+    raw_dir = base_dir.parent.parent / "raw_data" / "pbp"
     pred_goal_dir = base_dir / "data" / "pred_goal"
     models_dir = base_dir / "models" / "pred_goal"
     scored_dir = pred_goal_dir / "scored"

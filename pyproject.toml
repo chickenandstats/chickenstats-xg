@@ -34,7 +34,7 @@ xg-experiments    = "chickenstats_xg.v1.experiments:main"
 # finalize
 finalize-base-xg    = "chickenstats_xg.v1.base_xg.finalize:main"
 finalize-context-xg = "chickenstats_xg.v1.context_xg.finalize:main"
-finalize-pred-xg    = "chickenstats_xg.v1.pred_goal.finalize:main"
+finalize-pred-goal    = "chickenstats_xg.v1.pred_goal.finalize:main"
 # score
 score-base-xg       = "chickenstats_xg.v1.base_xg.score:main"
 score-context-xg    = "chickenstats_xg.v1.context_xg.score:main"
@@ -58,7 +58,7 @@ run-rapm         = "chickenstats_xg.v1.rapm.regressions:main"
 # mlflow
 log-model        = "chickenstats_xg.v1.utils.log_model:main"
 # utilities
-nuke-experiment  = "chickenstats_xg.nuke_experiment:main"
+nuke-experiment  = "chickenstats_xg.utilities.nuke_experiment:main"
 upload-data      = "chickenstats_xg.utilities.upload_data:main"
 download-data    = "chickenstats_xg.utilities.download_data:main"
 

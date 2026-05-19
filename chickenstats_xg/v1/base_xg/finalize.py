@@ -1,4 +1,3 @@
-
 """Retrain best base_xg model on all training data, score all historical PBP, and freeze.
 
 Reads the best Optuna trial (by PR-AUC) from the given study, retrains on the full
@@ -28,6 +27,7 @@ import xgboost as xgb
 from sklearn.linear_model import LogisticRegression
 from datetime import datetime, timezone
 
+from chickenstats.utilities import ChickenProgress
 from dotenv import load_dotenv
 from mlflow.models.signature import infer_signature
 
@@ -49,7 +49,6 @@ from chickenstats_xg.v1.experiments import (
     model_viz,
 )
 from chickenstats_xg.v1.utils.artifacts import (
-    load_model_artifacts,
     params_from_run_name,
     save_model_artifacts,
     save_model_metadata,
@@ -77,11 +76,8 @@ def _split_df(df: pd.DataFrame, strength: str) -> tuple[pd.DataFrame, pd.Series]
 def _interaction_constraints(columns: list[str]) -> list[list[str]]:
     """Filter BASE_XG_INTERACTION_GROUPS to features present in the training matrix."""
     return [
-        [f for f in group if f in columns]
-        for group in BASE_XG_INTERACTION_GROUPS
-        if any(f in columns for f in group)
+        [f for f in group if f in columns] for group in BASE_XG_INTERACTION_GROUPS if any(f in columns for f in group)
     ]
-
 
 
 def _finalize_one(
@@ -95,6 +91,14 @@ def _finalize_one(
     """Retrain, score with OOF, and save artifacts for a single strength state."""
     study_name = f"{strength}-{version}-base"
     study = optuna.load_study(study_name=study_name, storage=storage)
+    study_n_total = len(study.trials)
+    study_n_completed = sum(
+        1 for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE and t.values is not None
+    )
+    study_n_pareto = len(study.best_trials)
+    print(
+        f"  [{strength}] study: {study_n_total} total / {study_n_completed} completed / {study_n_pareto} Pareto-optimal"
+    )
 
     data_dir = Path(__file__).parent.parent / "data" / "base_xg"
     train_df = pd.read_parquet(data_dir / "train" / f"{strength}.parquet")
@@ -127,7 +131,12 @@ def _finalize_one(
         print(f"  [{strength}] screening top {top_n} trials by calibrated hold-out log loss...")
         candidates = select_top_trials(study, top_n, max_depth_cap=MAX_DEPTH_CAP)
         best_params, best_trial_num, best_trial = screen_trials(
-            candidates, fixed_params, X_train, y_train, X_hold_out, y_hold_out,
+            candidates,
+            fixed_params,
+            X_train,
+            y_train,
+            X_hold_out,
+            y_hold_out,
             max_depth_cap=MAX_DEPTH_CAP,
         )
 
@@ -174,8 +183,13 @@ def _finalize_one(
     print(f"  [{strength}] saved → {strength_dir}/model.ubj + calibrator.joblib + oof.parquet + scored parquet")
 
     save_model_metadata(
-        models_dir, strength, "base_xg", version, study_name, best_trial_num,
-        trial_value=best_trial.value if best_trial is not None else None,
+        models_dir,
+        strength,
+        "base_xg",
+        version,
+        study_name,
+        best_trial_num,
+        trial_values=best_trial.values if best_trial is not None else None,
         trial=best_trial,
     )
 
@@ -185,7 +199,7 @@ def _finalize_one(
     mlflow.enable_system_metrics_logging()
 
     y_probs = model.predict_proba(X_hold_out)[:, 1]
-    y_preds = (y_probs >= 0.5).astype(int)
+    y_preds = (y_probs >= float(y_hold_out.mean())).astype(int)
     hold_out_metrics = {f"hold_out_{k}": float(v) for k, v in model_metrics(y_hold_out, y_preds, y_probs).items()}
     signature = infer_signature(X_hold_out, y_probs)
     run_name = f"base_xg-{strength}-final"
@@ -200,14 +214,23 @@ def _finalize_one(
         )
 
     with run_ctx:
-        mlflow.set_tags({
-            "finalized": "true",
-            "finalized_at": datetime.now(timezone.utc).isoformat(),
-            "finalized_version": version,
-        })
+        mlflow.set_tags(
+            {
+                "finalized": "true",
+                "finalized_at": datetime.now(timezone.utc).isoformat(),
+                "finalized_version": version,
+            }
+        )
         mlflow.log_params({**params, "monotone_constraints": str(params["monotone_constraints"])})
         mlflow.log_metric("best_iteration", float(model.best_iteration or 0))
         mlflow.log_metrics(hold_out_metrics)
+        mlflow.log_metrics(
+            {
+                "study_total_trials": study_n_total,
+                "study_completed_trials": study_n_completed,
+                "study_pareto_front_size": study_n_pareto,
+            }
+        )
         log_viz(model_viz(model, X_train, y_train, X_hold_out, y_hold_out, run_name))
         model_info = mlflow.xgboost.log_model(model, name=run_name, signature=signature)
         mlflow.register_model(model_uri=model_info.model_uri, name=f"base_xg_{strength}")
@@ -219,10 +242,21 @@ def main() -> None:
     group.add_argument("--strength", "-s", type=str, choices=STRENGTHS, help="Single strength state to finalize.")
     group.add_argument("--all", "-a", action="store_true", help="Finalize all 5 strength states in sequence.")
     parser.add_argument("--version", "-v", type=str, required=True)
-    parser.add_argument("--run", "-r", type=str, default=None, help="MLflow run name to use instead of Optuna auto-selection. Cannot be combined with --all.")
-    parser.add_argument("--no-log", action="store_true", help="Skip all MLflow logging — just retrain, score, and save files.")
     parser.add_argument(
-        "--top-n", "-n", type=int, default=15,
+        "--run",
+        "-r",
+        type=str,
+        default=None,
+        help="MLflow run name to use instead of Optuna auto-selection. Cannot be combined with --all.",
+    )
+    parser.add_argument(
+        "--no-log", action="store_true", help="Skip all MLflow logging — just retrain, score, and save files."
+    )
+    parser.add_argument(
+        "--top-n",
+        "-n",
+        type=int,
+        default=15,
         help="Number of top CV PR-AUC trials to screen by calibrated hold-out log loss (default: 15). Ignored when --run is specified.",
     )
     args = parser.parse_args()
@@ -237,9 +271,13 @@ def main() -> None:
 
     strengths_to_run = STRENGTHS if args.all else [args.strength]
 
-    for strength in strengths_to_run:
-        print(f"Finalizing {strength}...")
-        _finalize_one(strength, args.version, storage, no_log=args.no_log, run_name=args.run, top_n=args.top_n)
+    with ChickenProgress() as progress:
+        task = progress.add_task(f"Finalizing {strengths_to_run[0]}...", total=len(strengths_to_run))
+        for strength in strengths_to_run:
+            progress.update(task, description=f"Finalizing {strength}...", refresh=True)
+            _finalize_one(strength, args.version, storage, no_log=args.no_log, run_name=args.run, top_n=args.top_n)
+            progress.advance(task)
+        progress.update(task, description="Finalize complete", refresh=True)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,9 @@
-
 """Retrain best context_xg gbtree model on all training data and freeze.
 
 Reads the best Optuna trial (by PR-AUC) from the given study, retrains a
-gbtree XGBoost model (depth=2, flag isolation constraints) with logit_base_xg
-as both base_margin (residual learning from T1 prior) and a learnable feature
-(preserving interaction constraint groups), calibrates with pooled OOF + hold-out
-Platt scaling, and writes:
+gbtree XGBoost model (depth=2) with logit_base_xg as both base_margin
+(residual learning from T1 prior) and a learnable feature, calibrates with
+pooled OOF + hold-out Platt scaling, and writes:
 
   models/context_xg/{strength}.ubj           — frozen gbtree booster
   models/context_xg/{strength}_calibrator.joblib
@@ -29,23 +27,21 @@ import pandas as pd
 import xgboost as xgb
 from datetime import datetime, timezone
 
+from chickenstats.utilities import ChickenProgress
 from dotenv import load_dotenv
 from mlflow.models.signature import infer_signature
 from sklearn.linear_model import LogisticRegression
 
 from chickenstats_xg.v1.config import (
     CONTEXT_XG_FEATURE_COLUMNS,
-    CONTEXT_XG_INTERACTION_GROUPS,
     CV_CALIBRATE_FOLDS,
-    EARLY_STOPPING_ROUNDS,
-    N_ESTIMATORS,
+    EARLY_STOPPING_ROUNDS_CONTEXT_XG,
+    N_ESTIMATORS_CONTEXT_XG,
     PASSTHROUGH_COLS,
     SEED,
     STRENGTHS,
-    compute_performance_tag,
 )
 from chickenstats_xg.v1.experiments import (
-    _build_context_interaction_constraints,
     load_optuna_storage,
     log_viz,
     model_metrics,
@@ -75,7 +71,6 @@ def _split_df(df: pd.DataFrame, strength: str) -> tuple[pd.DataFrame, pd.Series,
     return X, y, bm
 
 
-
 def _finalize_one(
     strength: str,
     version: str,
@@ -85,6 +80,14 @@ def _finalize_one(
 ) -> None:
     study_name = f"{strength}-{version}-context"
     study = optuna.load_study(study_name=study_name, storage=storage)
+    study_n_total = len(study.trials)
+    study_n_completed = sum(
+        1 for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE and t.values is not None
+    )
+    study_n_pareto = len(study.best_trials)
+    print(
+        f"  [{strength}] study: {study_n_total} total / {study_n_completed} completed / {study_n_pareto} Pareto-optimal"
+    )
 
     data_dir = Path(__file__).parent.parent / "data" / "context_xg"
     train_df = pd.read_parquet(data_dir / "train" / f"{strength}.parquet")
@@ -98,24 +101,31 @@ def _finalize_one(
         "booster": "gbtree",
         "verbosity": 0,
         "random_state": SEED,
-        "n_estimators": N_ESTIMATORS,
-        "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
+        "n_estimators": N_ESTIMATORS_CONTEXT_XG,
+        "early_stopping_rounds": EARLY_STOPPING_ROUNDS_CONTEXT_XG,
         "enable_categorical": True,
         "max_depth": 2,
-        "interaction_constraints": _build_context_interaction_constraints(list(X_train.columns)),
-        # logloss is last so XGBoost uses it for early stopping (calibration criterion).
-        # aucpr-only stopping caused bimodal collapse — model stopped when ranking plateaued,
-        # before calibration settled. max_delta_step=1 is a fixed structural constraint;
-        # it is also set in _params_context_xg() so CV folds match this value.
-        "eval_metric": ["aucpr", "logloss"],
+        # aucpr is last so XGBoost uses it for early stopping.
+        # logloss-based stopping always selects best_iter=0 for context_xg: base_margin
+        # starts from a calibrated prior, and logloss briefly increases as tree 0 overshoots,
+        # then only recovers after many rounds. aucpr stopping is safe here because
+        # max_delta_step=1 structurally caps each leaf update — the bimodal collapse that
+        # motivated logloss stopping was observed before this structural constraint was added.
+        "eval_metric": ["logloss", "aucpr"],
         "max_delta_step": 1,
     }
 
     print(f"  [{strength}] screening top {top_n} trials by calibrated hold-out log loss...")
-    candidates = select_top_trials(study, top_n)
+    candidates = select_top_trials(study, top_n, goal_fp_cap=0.05)
     best_params, best_trial_num, best_trial = screen_trials(
-        candidates, fixed_params, X_train, y_train, X_hold_out, y_hold_out,
-        bm_train=bm_train, bm_hold_out=bm_hold_out,
+        candidates,
+        fixed_params,
+        X_train,
+        y_train,
+        X_hold_out,
+        y_hold_out,
+        bm_train=bm_train,
+        bm_hold_out=bm_hold_out,
     )
 
     # max_delta_step=1 is a structural constraint, not a tunable param.
@@ -126,7 +136,8 @@ def _finalize_one(
 
     model = xgb.XGBClassifier(**params)
     model.fit(
-        X_train, y_train,
+        X_train,
+        y_train,
         eval_set=[(X_hold_out, y_hold_out)],
         base_margin=bm_train,
         base_margin_eval_set=[bm_hold_out] if bm_hold_out is not None else None,
@@ -140,9 +151,7 @@ def _finalize_one(
     # calibrator was anchored to hold-out data alone.
     # These OOF predictions also serve as honest training-era predictions for
     # _oof.parquet (score.py replaces in-sample predictions with them).
-    oof_prob, oof_mask = compute_oof_predictions(
-        model, X_train, y_train, params, CV_CALIBRATE_FOLDS, bm_train=bm_train
-    )
+    oof_prob, oof_mask = compute_oof_predictions(model, X_train, y_train, params, CV_CALIBRATE_FOLDS, bm_train=bm_train)
 
     # Pool training OOF + hold-out for Platt calibration. Pooling spans the
     # full 15-season range, preventing the temporal mismatch that arises when
@@ -152,10 +161,11 @@ def _finalize_one(
     # base_margin. Issue 5's Platt ceiling concern applies to base_xg EA
     # (~99% top-decile actual rate), not context_xg EA (~89%).
     raw_hold_out = model.predict_proba(X_hold_out, base_margin=bm_hold_out)[:, 1]
-    calib_probs  = np.concatenate([oof_prob[oof_mask], raw_hold_out])
+    calib_probs = np.concatenate([oof_prob[oof_mask], raw_hold_out])
     calib_labels = np.concatenate([y_train.to_numpy()[oof_mask], y_hold_out.to_numpy()])
     calibrator = LogisticRegression(C=1.0, max_iter=1000).fit(
-        calib_probs.reshape(-1, 1), calib_labels,
+        calib_probs.reshape(-1, 1),
+        calib_labels,
     )
 
     # Training shots use OOF probs (honest, not in-sample), falling back to
@@ -182,8 +192,13 @@ def _finalize_one(
     print(f"  [{strength}] saved → {strength_dir}/model.ubj + calibrator.joblib + oof.parquet + scored parquet")
 
     save_model_metadata(
-        models_dir, strength, "context_xg", version, study_name, best_trial_num,
-        trial_value=best_trial.value if best_trial is not None else None,
+        models_dir,
+        strength,
+        "context_xg",
+        version,
+        study_name,
+        best_trial_num,
+        trial_values=best_trial.values if best_trial is not None else None,
         trial=best_trial,
     )
 
@@ -193,7 +208,7 @@ def _finalize_one(
     mlflow.enable_system_metrics_logging()
 
     y_probs = model.predict_proba(X_hold_out, base_margin=bm_hold_out)[:, 1]
-    y_preds = (y_probs >= 0.5).astype(int)
+    y_preds = (y_probs >= float(y_hold_out.mean())).astype(int)
     hold_out_metrics = {f"hold_out_{k}": float(v) for k, v in model_metrics(y_hold_out, y_preds, y_probs).items()}
     signature = infer_signature(X_hold_out, y_probs)
     run_name = f"context_xg-{strength}-final"
@@ -208,14 +223,23 @@ def _finalize_one(
         )
 
     with run_ctx:
-        mlflow.set_tags({
-            "finalized": "true",
-            "finalized_at": datetime.now(timezone.utc).isoformat(),
-            "finalized_version": version,
-        })
+        mlflow.set_tags(
+            {
+                "finalized": "true",
+                "finalized_at": datetime.now(timezone.utc).isoformat(),
+                "finalized_version": version,
+            }
+        )
         mlflow.log_params(params)
         mlflow.log_metric("best_iteration", float(model.best_iteration or 0))
         mlflow.log_metrics(hold_out_metrics)
+        mlflow.log_metrics(
+            {
+                "study_total_trials": study_n_total,
+                "study_completed_trials": study_n_completed,
+                "study_pareto_front_size": study_n_pareto,
+            }
+        )
         log_viz(model_viz(model, X_train, y_train, X_hold_out, y_hold_out, run_name, base_margin=bm_hold_out))
         model_info = mlflow.xgboost.log_model(model, name=run_name, signature=signature)
         mlflow.register_model(model_uri=model_info.model_uri, name=f"context_xg_{strength}")
@@ -229,7 +253,10 @@ def main() -> None:
     parser.add_argument("--version", "-v", type=str, required=True)
     parser.add_argument("--no-log", action="store_true")
     parser.add_argument(
-        "--top-n", "-n", type=int, default=15,
+        "--top-n",
+        "-n",
+        type=int,
+        default=15,
         help="Number of top CV PR-AUC trials to screen by calibrated hold-out log loss (default: 15).",
     )
     args = parser.parse_args()
@@ -240,9 +267,14 @@ def main() -> None:
     storage = load_optuna_storage()
 
     strengths_to_run = STRENGTHS if args.all else [args.strength]
-    for strength in strengths_to_run:
-        print(f"Finalizing {strength}...")
-        _finalize_one(strength, args.version, storage, no_log=args.no_log, top_n=args.top_n)
+
+    with ChickenProgress() as progress:
+        task = progress.add_task(f"Finalizing {strengths_to_run[0]}...", total=len(strengths_to_run))
+        for strength in strengths_to_run:
+            progress.update(task, description=f"Finalizing {strength}...", refresh=True)
+            _finalize_one(strength, args.version, storage, no_log=args.no_log, top_n=args.top_n)
+            progress.advance(task)
+        progress.update(task, description="Finalize complete", refresh=True)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,3 @@
-
 """Score raw PBP with the frozen base_xg model.
 
 Reads raw PBP parquets for the requested years, applies base_xg feature
@@ -47,13 +46,32 @@ STRENGTH_FILE_ARGS: list[tuple[str, _StrengthArg]] = [
 ]
 
 READ_COLS = [
-    "event_idx", "event", "strength_state", "coords_x", "coords_y",
-    "season", "game_id", "period", "period_seconds", "game_seconds",
-    "event_team", "event_distance", "event_angle", "shot_type",
-    "player_1_position", "is_home", "score_diff", "zone",
-    "danger", "high_danger", "goal",
-    "player_1_api_id", "opp_goalie_api_id", "session",
-    "home_on_api_id", "away_on_api_id",
+    "event_idx",
+    "event",
+    "strength_state",
+    "coords_x",
+    "coords_y",
+    "season",
+    "game_id",
+    "period",
+    "period_seconds",
+    "game_seconds",
+    "event_team",
+    "event_distance",
+    "event_angle",
+    "shot_type",
+    "player_1_position",
+    "is_home",
+    "score_diff",
+    "zone",
+    "danger",
+    "high_danger",
+    "goal",
+    "player_1_api_id",
+    "opp_goalie_api_id",
+    "session",
+    "home_on_api_id",
+    "away_on_api_id",
 ]
 
 NON_FEATURE_COLS = ["goal", "season"] + PASSTHROUGH_COLS
@@ -115,15 +133,15 @@ def score_strength(
 
     model, calibrator = load_model_artifacts(models_dir, strength)
     if calibrator is None:
-        print(f"  [{strength}] WARNING: no calibrator found — base_xg will be uncalibrated (scale_pos_weight inflated).")
+        print(
+            f"  [{strength}] WARNING: no calibrator found — base_xg will be uncalibrated (scale_pos_weight inflated)."
+        )
 
     raw_probs = model.predict_proba(X)[:, 1]
     base_xg = calibrator.predict_proba(raw_probs.reshape(-1, 1))[:, 1] if calibrator is not None else raw_probs
 
     df = (
-        df.assign(base_xg=base_xg)
-        .sort_values(["season", "game_id", "period", "period_seconds"])
-        .reset_index(drop=True)
+        df.assign(base_xg=base_xg).sort_values(["season", "game_id", "period", "period_seconds"]).reset_index(drop=True)
     )
 
     # Override training-era shots with calibrated OOF predictions from finalize.py
@@ -133,24 +151,27 @@ def score_strength(
     df.to_parquet(scored_dir / f"{strength}.parquet", index=False)
 
 
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Score raw PBP with the frozen base_xg model.")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--strength", "-s", type=str, choices=STRENGTHS, help="Single strength state to score.")
     group.add_argument("--all", "-a", action="store_true", help="Score all five strength states.")
     parser.add_argument(
-        "--years", "-y", type=int, nargs="+",
+        "--years",
+        "-y",
+        type=int,
+        nargs="+",
         help="NHL season end-years to include (e.g. 2024 for 2023-24). Defaults to all available.",
     )
     parser.add_argument(
-        "--no-rapm", action="store_true",
+        "--no-rapm",
+        action="store_true",
         help="Skip RAPM PBP enrichment after scoring (only applies with --all).",
     )
     args = parser.parse_args()
 
     base_dir = Path(__file__).parent.parent
-    raw_dir = base_dir.parent / "raw_data" / "pbp"
+    raw_dir = base_dir.parent.parent / "raw_data" / "pbp"
     models_dir = base_dir / "models" / "base_xg"
     scored_dir = base_dir / "data" / "base_xg" / "scored"
 

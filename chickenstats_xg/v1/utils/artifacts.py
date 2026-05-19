@@ -1,4 +1,3 @@
-
 """Shared model artifact helpers for base_xg, context_xg, and pred_goal finalize.py."""
 
 import json
@@ -88,7 +87,7 @@ def save_model_metadata(
     version: str,
     study_name: str,
     trial_num: int,
-    trial_value: float | None,
+    trial_values: list[float] | None,
     trial: optuna.Trial | None = None,
 ) -> None:
     """Write a .meta.json sidecar alongside the frozen model for provenance tracing.
@@ -97,11 +96,15 @@ def save_model_metadata(
     MLflow tuning run without querying the database.
     """
     try:
-        git_commit = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(Path(__file__).parent),
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
+        git_commit = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=str(Path(__file__).parent),
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
     except Exception:
         git_commit = "unknown"
 
@@ -113,7 +116,7 @@ def save_model_metadata(
         "version": version,
         "optuna_study_name": study_name,
         "optuna_trial_number": trial_num,
-        "optuna_trial_value": round(trial_value, 6) if trial_value is not None else None,
+        "optuna_trial_values": [round(v, 6) for v in trial_values] if trial_values is not None else None,
         "mlflow_tuning_run_id": tuning_run_id,
         "git_commit": git_commit,
         "finalized_at": datetime.now(timezone.utc).isoformat(),
@@ -127,9 +130,7 @@ def save_model_metadata(
     print(f"  [{strength}] metadata → {meta_path}")
 
 
-def load_model_artifacts(
-    models_dir: Path, strength: str
-) -> tuple[xgb.XGBClassifier, Any]:
+def load_model_artifacts(models_dir: Path, strength: str) -> tuple[xgb.XGBClassifier, Any]:
     """Load frozen XGBoost model and calibrator for one strength state.
 
     Expects models at models_dir/{strength}/model.ubj and calibrator.joblib.

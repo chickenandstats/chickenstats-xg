@@ -1,6 +1,6 @@
 # chickenstats-xg — v1.0.0 Cascade xG Model Reference
 
-> Last updated: 2026-05-15
+> Last updated: 2026-05-18
 
 This document is the definitive reference for the `v1.0.0` cascade xG model: what it is, how every script fits together, the full feature pipeline, training instructions, infrastructure requirements, and implementation status.
 
@@ -38,9 +38,9 @@ Tier 1 — base_xg  (XGBoost gbtree)
   → calibrated P(goal | where, shot type)   — no player identity, no shot sequence, no game state
   Output: base_xg ∈ (0, 1), OOF isotonic-calibrated
 
-Tier 2 — context_xg  (XGBoost gbtree, depth=2, 9 flag/state isolation constraint groups)
+Tier 2 — context_xg  (XGBoost gbtree, depth=2)
   logit_base_xg (T1 prior) as BOTH base_margin AND learnable feature + binary flags + game-state
-  modifiers + sequence features (20 features total)
+  modifiers + sequence features (21 features total)
   → calibrated P(goal | geometry + game state + sequence context)
   Output: context_xg ∈ (0, 1), pooled OOF + hold-out Platt-calibrated
 
@@ -58,13 +58,13 @@ Tier 3 — pred_goal  (XGBoost gbtree)
 The original two-tier architecture (base_xg with all 26 features → pred_goal) had a structural
 GOAL event fingerprinting problem. Any gbtree model trained on [GOAL=1, SHOT=0] data can exploit
 the fact that GOAL events have dramatically different shot sequence distributions than SHOT events
-(rush_attempt is 12.5× higher for goals). By moving sequence features to a **gbtree depth-2 Tier 2
-with per-flag interaction constraints**, we eliminate the fingerprint risk: each binary flag
-(`is_rebound`, `is_scramble`, `rush_attempt`, `prior_face`) is paired with `logit_base_xg` in its
-own constraint group. A depth-2 tree can only learn one quality-conditional flag effect per tree —
-structurally impossible to combine two flags on one branch path. The multi-flag Rush+Rebound+<10ft
-path that fingerprints goal events requires depth ≥ 3 and cross-group feature combinations, both
-blocked by design. See `DECISIONS.md` Issues 7 and 9.
+(rush_attempt is 12.5× higher for goals). By moving sequence features to a **gbtree depth-2 Tier 2**,
+we eliminate the fingerprint risk: at `max_depth=2`, each tree path can access at most 2 features,
+making the multi-flag Rush+Rebound+<10ft combination structurally impossible. Interaction constraints
+were added initially (Issues 7 and 9) but removed in Issue 21 because they isolated binary flags
+into low-gain groups that could never compete with the continuous feature block, producing zero
+feature importance for `is_rebound`, `is_scramble`, etc. `max_depth=2` alone provides the necessary
+structural protection. See `DECISIONS.md` Issues 7, 9, and 21.
 
 **Cascade mechanics:**
 - Each tier's raw prediction is calibrated to true goal rates.
@@ -72,15 +72,15 @@ blocked by design. See `DECISIONS.md` Issues 7 and 9.
   (1) as `base_margin` — shifts the gradient at each training example so trees learn the contextual
   residual from the T1 prior (`g = sigmoid(logit_base_xg + F(x)) − y`), collapsing the bimodal cliff
   that occurs when trees must predict the full sigmoid range from scratch; and (2) as a learnable
-  feature in the 9 interaction constraint groups — each depth-2 tree can ask "given this shot
-  quality, how much does THIS flag/state shift danger?" without logit_base_xg only having one
-  split available per group. Both roles are required: base_margin alone (without the feature)
-  degenerates each flag group to a single binary split, equivalent to gblinear.
+  feature — each depth-2 tree can ask "given this shot quality, how much does this factor shift
+  danger?" Both roles are required: base_margin alone (without the feature) degenerates to
+  learning only binary splits on each flag, equivalent to gblinear's additive structure.
 - T3 (pred_goal): `logit(calibrated context_xg)` is passed as `base_margin`. The hard coefficient
   is appropriate here — pred_goal should treat the full geometry+sequence prior as its fixed starting
   point and learn only the talent residual on top.
-- `pred_goal/process_data.py` reads from `context_xg/scored/` and renames `context_xg` → `base_xg`
-  before writing train parquets, so `experiments.py`'s base_margin extraction is unchanged downstream.
+- `pred_goal/process_data.py` reads from `context_xg/scored/` and drops the Tier 1 `base_xg`
+  column; `context_xg` is carried through directly (R6 rename removed; `process-pred-goal` re-run
+  required to regenerate parquets with updated column names).
 
 **RAPM target:**
 - RAPM regressions use `context_xg` (not `base_xg`) as the xGF regression target.
@@ -115,7 +115,7 @@ chickenstats-xg/
 │   │   ├── charts.py                  7 classifier charts (classification_report, roc_auc, etc.)
 │   │   └── style.py                   Palette, colormap, set_style(), NHL team color utilities
 │   │
-│   ├── nuke_experiment.py             Delete MLflow experiment + Optuna study (version-agnostic)
+│   ├── nuke_experiment.py             Delete MLflow experiment + Optuna study (moved to utilities/ — see utilities/nuke_experiment.py)
 │   │
 │   └── v1/                            v1.0.0 version-specific code and data
 │       ├── experiments.py             Optuna tuning for all three tiers
@@ -294,34 +294,33 @@ Computed from raw PBP events by `prep_data()` in `xg_utils.py`. Three filters be
 Added to the base_xg scored parquets by `prep_data()` and consumed by `context_xg/process_data.py`.
 Require the base_xg model to have scored the full history first.
 
-`CONTEXT_XG_FEATURE_COLUMNS` in `config.py` (20 features):
+`CONTEXT_XG_FEATURE_COLUMNS` in `config.py` (21 features):
 
 | Feature | Description | Notes |
 |---|---|---|
-| `logit_base_xg` | `logit(base_xg)` — T1 geometry prior | Used as BOTH `base_margin` AND a learnable feature; paired with each binary flag/state in its own constraint group (Groups 0–7) and also in the continuous block (Group 8) |
-| `is_rebound` | 1 if shot follows a rebound | Binary; constraint Group 0 with `logit_base_xg` |
-| `is_scramble` | 1 if shot is part of a scramble | Binary; constraint Group 1 |
-| `rush_attempt` | 1 if shot came off a rush | Binary; constraint Group 2 |
-| `prior_face` | 1 if prior event was a faceoff | Binary; constraint Group 3 |
-| `is_home` | 1 if shooting team is home | Game-state modifier; constraint Group 4. Moved from base_xg in Issue 10. |
-| `position` | Shooter position (F/D/G) | Game-state modifier; constraint Group 5; `pd.Categorical` |
-| `strength_state` | e.g. "5v5", "5v4" | Game-state modifier; constraint Group 6; `pd.Categorical` |
-| `score_diff` | Score differential, clipped to ±4 | Game-state modifier; constraint Group 7. Moved from base_xg in Issue 10 to fix EA OOF gap. |
-| `period` | 1–4 (OT = 4) | Temporal; in continuous block (Group 8) |
-| `period_seconds` | Seconds into the period | Temporal; in continuous block (Group 8) |
-| `play_speed` | `distance_from_last / seconds_since_last` | Continuous sequence; Group 8; null when ≤ 0 seconds |
-| `seconds_since_last` | Seconds since prior event | Same game + period only; Group 8 |
-| `distance_from_last` | Euclidean dist from prior event | Group 8 |
-| `prior_event_angle` | Angle to net of the prior event | Nullable float; Group 8 |
-| `prior_event_distance` | Distance from net of the prior event | Nullable float; Group 8 |
-| `seconds_since_stoppage` | Seconds since last faceoff | Forward-filled over `game_id`; Group 8 |
-| `prior_event_same` | Type of prior event by the *same* team | String categorical: SHOT/MISS/BLOCK/GIVE/TAKE/HIT; `pd.Categorical` via `_apply_fixed_categoricals()`; Group 8 |
-| `prior_event_opp` | Type of prior event by the *opposing* team | Same categories; mutually exclusive with `prior_event_same`; Group 8 |
+| `logit_base_xg` | `logit(base_xg)` — T1 geometry prior | Used as BOTH `base_margin` AND a learnable feature |
+| `is_rebound` | 1 if shot follows a rebound | Binary flag |
+| `is_scramble` | 1 if shot is part of a scramble | Binary flag |
+| `rush_attempt` | 1 if shot came off a rush | Binary flag |
+| `prior_face` | 1 if prior event was a faceoff | Binary flag |
+| `is_home` | 1 if shooting team is home | Game-state modifier; moved from base_xg in Issue 10 |
+| `position` | Shooter position (F/D/G) | Game-state modifier; `pd.Categorical` |
+| `strength_state` | e.g. "5v5", "5v4" | Game-state modifier; `pd.Categorical` |
+| `score_diff` | Score differential, clipped to ±4 | Game-state modifier; moved from base_xg in Issue 10 to fix EA OOF gap |
+| `period` | 1–4 (OT = 4) | Temporal |
+| `period_seconds` | Seconds into the period | Temporal |
+| `play_speed` | `distance_from_last / seconds_since_last` | Continuous sequence; null when ≤ 0 seconds |
+| `seconds_since_last` | Seconds since prior event | Same game + period only |
+| `distance_from_last` | Euclidean dist from prior event | |
+| `prior_event_angle` | Angle to net of the prior event | Nullable float |
+| `prior_event_distance` | Distance from net of the prior event | Nullable float |
+| `seconds_since_stoppage` | Seconds since last faceoff | Forward-filled over `game_id` |
+| `seconds_since_event_team_change` | Seconds since the last lineup change by the shooting team | Forward-filled over `game_id`; added for fresh-line context |
+| `seconds_since_opp_team_change` | Seconds since the last lineup change by the opposing team | Forward-filled over `game_id`; added for tired-opposition context |
+| `prior_event_same` | Type of prior event by the *same* team | String categorical: SHOT/MISS/BLOCK/GIVE/TAKE/HIT; `pd.Categorical` via `_apply_fixed_categoricals()` |
+| `prior_event_opp` | Type of prior event by the *opposing* team | Same categories; mutually exclusive with `prior_event_same` |
 
-**9 interaction constraint groups:**
-- Groups 0–3: `[logit_base_xg, <flag>]` (binary event flags)
-- Groups 4–7: `[logit_base_xg, <state>]` (game-state modifiers)
-- Group 8: continuous sequence + temporal features (including `logit_base_xg`)
+**No interaction constraints** (removed Issue 21 — `max_depth=2` is sufficient structural protection; constraints isolated binary flags into low-gain groups that competed at a systematic disadvantage against the continuous block).
 
 `context_xg/process_data.py` drops these columns from pred_goal parquets after context_xg scoring.
 
@@ -438,46 +437,42 @@ Events with < 2 teammates having prior-season RAPM receive null — XGBoost hand
 - **Output format:** Frozen booster saved as `{strength}/model.ubj` (binary UBJSON); provenance in `{strength}/meta.json`
 - **Training data:** 2010-11 through 2023-24; hold-out is 2024-25
 
-### 5.2 context_xg — XGBoost gbtree Classifier (depth=2, flag isolation)
+### 5.2 context_xg — XGBoost gbtree Classifier (depth=2)
 
 - **Algorithm:** XGBoost `binary:logistic`, `booster=gbtree`, `max_depth=2` (fixed)
-- **Why gbtree with depth=2?** Each binary flag (`is_rebound`, `is_scramble`, `rush_attempt`,
-  `prior_face`) is placed in its own interaction constraint group paired with `logit_base_xg`.
-  A depth-2 tree path is: `logit_base_xg > threshold → is_flag == 1 → leaf`. This learns a
-  quality-conditional flag effect without allowing two flags to combine on one path. Prevents
-  both the gblinear bimodal cliff (flags additive regardless of shot quality) and the GOAL
-  fingerprinting risk (multi-flag Rush+Rebound path requires depth ≥ 3 + cross-group features).
+- **Why gbtree with depth=2?** At `max_depth=2`, each tree path can access at most 2 features.
+  This structurally prevents the multi-flag Rush+Rebound+<10ft combination that fingerprints GOAL
+  events (requires ≥ 3 features). No interaction constraints are needed — `max_depth=2` is the
+  protection. Interaction constraints were originally added (Issues 7 and 9) but removed in Issue
+  21 because they isolated binary flags into low-gain groups that could never compete with the
+  continuous feature block, producing zero feature importance for `is_rebound`, `is_scramble`, etc.
 - **Why not gblinear?** gblinear's additive structure adds fixed log-odds per flag regardless of
   shot quality. Multiple co-firing flags stack their shifts, creating a bimodal prediction cliff
   (~0.62–0.65) for high-flag shots. No calibrator can resolve this. Quality interaction features
   (`flag × base_xg`) are collinear with `logit_base_xg` in a linear model, causing weight collapse.
   See Issue 9 in `DECISIONS.md`.
-- **Interaction constraint groups** (`CONTEXT_XG_INTERACTION_GROUPS` in `config.py`):
-  - Groups 0–3: `[logit_base_xg, <flag>]` — is_rebound, is_scramble, rush_attempt, prior_face
-  - Groups 4–7: `[logit_base_xg, <state>]` — is_home, position, strength_state, score_diff
-  - Group 8: continuous sequence + temporal block (logit_base_xg included so depth-2 trees can ask "how does rush speed modify the spatial prior?")
-- **No `colsample_*` parameters:** Column sampling selects features before constraints are applied;
-  if a group's features aren't sampled for a given tree, that tree degenerates silently.
-  All `colsample_*` fixed at 1.0 (omitted from param space).
-- **Feature set:** 20 `CONTEXT_XG_FEATURE_COLUMNS` — `logit_base_xg` + 4 binary event flags + 4
+- **Feature set:** 21 `CONTEXT_XG_FEATURE_COLUMNS` — `logit_base_xg` + 4 binary event flags + 4
   game-state modifiers (`is_home`, `position`, `strength_state`, `score_diff`) + continuous sequence
-  + temporal features + `prior_event_same`/`prior_event_opp` (string categoricals).
+  + temporal features (including `seconds_since_event_team_change` and `seconds_since_opp_team_change`)
+  + `prior_event_same`/`prior_event_opp` (string categoricals).
 - **Categorical handling:** `enable_categorical=True`; `prior_event_same`/`prior_event_opp`
   and `position`/`strength_state` converted to `pd.Categorical` by `_apply_fixed_categoricals()`.
 - **`logit_base_xg` dual role — base_margin AND feature:** `logit_base_xg` is passed as
   `base_margin` (fixing `g = sigmoid(logit_base_xg + F(x)) − y`) AND included in the feature
-  matrix. Two distinct roles: base_margin provides the gradient anchor (main effect, fixed coeff
-  1.0); the feature enables quality-conditional flag/state adjustments (the tree's second split
-  in each constraint group). Without base_margin, trees must output the full probability range from
-  scratch, causing flag-group leaf weights to cluster all flag shots at a mid-range probability
-  regardless of base quality (bimodal cliff). Without the feature, each group degenerates to a
-  single binary split, equivalent to gblinear's additive coefficient. See Issues 8 and 11 in
-  `DECISIONS.md`.
+  matrix. base_margin provides the gradient anchor; the feature enables quality-conditional
+  adjustments (depth-2 trees can ask "given this spatial prior, how much does this factor shift
+  danger?"). Without base_margin, trees must output the full probability range from scratch (bimodal
+  cliff). Without the feature, the model can't learn quality-conditional effects. See Issues 8 and 11.
+- **eval_metric:** `["logloss", "aucpr"]` — early stopping on aucpr (last metric). Logloss-based
+  early stopping causes `best_iter=0` for base_margin models: logloss increases in the first ~17
+  rounds as tree 0 slightly overshoots the calibrated prior, and `early_stopping_rounds=20` always
+  selects round 0. See Issue 20.
 - **Critical finalization parameter:** `max_delta_step=1` is required to prevent bimodal collapse.
-  Trials with `max_delta_step ≥ 2` rank well on CV PR-AUC (flat landscape) but produce bimodal
-  prediction distributions (large leaf weights, calibrated log loss >> 2× null). The calibrated
-  top-N trial screening in `finalize.py` (`--top-n 150`) reliably selects mds=1 trials. Using
-  `--top-n 15` is unsafe — mds=1 candidates sit at rank 16+ and are excluded from screening.
+  Trials with `max_delta_step ≥ 2` rank well on CV PR-AUC but produce bimodal prediction
+  distributions (large leaf weights, calibrated log loss >> 2× null). The `structural_flaw_penalty`
+  hard gate in `screen_trials()` reliably rejects mds≥2 bimodal trials. Use `--top-n 15` (default).
+  Historical note: prior to Issue 22/23 (before structural_flaw_penalty became the hard gate),
+  `--top-n 150` was required because the flat CV landscape filled the top-15 with mds≥2 trials.
 - **Calibration:** Pooled OOF + hold-out Platt (LogisticRegression, C=1.0). OOF fold models are
   trained to `model.best_iteration` (no early stopping, same tree count as final model) to align
   the fold-model probability scale. OOF probs + hold-out probs are pooled before fitting the
@@ -520,10 +515,8 @@ Events with < 2 teammates having prior-season RAPM receive null — XGBoost hand
 - **Best trial selection:**
   - *base_xg / pred_goal:* Best PR-AUC among completed trials with `max_depth ≤ MAX_DEPTH_CAP`
   - *context_xg:* Calibrated top-N screening — top-N trials by CV PR-AUC are retrained with quick
-    hold-out Platt calibration; trials with calibrated log loss > 2× null_ll are rejected (bimodal
-    detection); the passing trial with the highest calibrated hold-out PR-AUC is selected. Use
-    `--top-n 150` (not the 15 default) because the CV landscape is flat and mds=1 non-bimodal
-    candidates sit at rank 16+. See `_screen_trials()` in `context_xg/finalize.py`.
+    hold-out Platt calibration. Hard rejection (either triggers): cal_ll > 2× null_ll (catastrophic
+    miscalibration); structural_flaw_penalty > struct_cap where struct_cap = `_STRUCT_PENALTY_REL_CAP × null_ll` = 0.088 × null_ll — scales with base rate and holdout size (ES cap=0.020; EA cap=0.060). `goal_fp` and `dist_ratio` are diagnostics only — context_xg legitimately assigns 85%+ to extreme-danger shots that score at 85%+ rate; this is calibration, not fingerprinting (verified: ES 96.3% actual goal rate for context_xg ≥ 0.90). Use `--top-n 15` (default). See Issues 22+23 in DECISIONS.md.
 - **Why PR-AUC not ROC-AUC?** ~6–8% positive rate (goals) makes ROC-AUC misleading (TN abundance inflates it); PR-AUC penalises false positives in the rare class directly
 - **Pruning:** Manual median pruner — fold PR-AUC stored as user attr `fold_{n}_prauc`; trial pruned if below median of completed trials at that fold after ≥ 5 completed baseline trials
 - **Pruned runs:** Logged to MLflow with `trial_outcome=pruned`, `performance=pruned`, status `KILLED`
@@ -613,7 +606,7 @@ DB_NAME=...
 | `chickenstats_xg/v1/pred_goal/finalize.py` | train + hold_out parquets, Optuna study | `models/pred_goal/{strength}/model.ubj` + `calibrator.joblib` + `meta.json` | ✅ Done |
 | `chickenstats_xg/v1/base_xg/run_pipeline.py` | — | Orchestrates base_xg finalize → score → context_xg process_data | ✅ Done |
 | `chickenstats_xg/v1/context_xg/run_pipeline.py` | — | Orchestrates context_xg finalize → score → RAPM → pred_goal process_data | ✅ Done |
-| `chickenstats_xg/nuke_experiment.py` | Study name, env | Deletes S3 + MLflow + Optuna records | ✅ Done |
+| `chickenstats_xg/utilities/nuke_experiment.py` | Study name, env | Deletes S3 + MLflow + Optuna records | ✅ Done |
 
 ---
 
@@ -705,11 +698,11 @@ uv run python chickenstats_xg/v1/context_xg/run_pipeline.py --version 1.0.0 --no
 ```
 
 This runs:
-1. `context_xg/finalize.py --all --top-n 150` — retrains gbtree depth-2 using calibrated top-N trial screening (use `--top-n 150`, not the default 15 — the CV landscape is flat and mds=1 non-bimodal trials sit at rank 16+), pooled OOF + hold-out Platt calibrates, freezes model artifacts
+1. `context_xg/finalize.py --all --top-n 15` — retrains gbtree depth-2 using calibrated top-N trial screening with `structural_flaw_penalty` hard gate (bimodal mds≥2 trials are hard-rejected; `--top-n 15` default is safe), pooled OOF + hold-out Platt calibrates, freezes model artifacts
 2. `context_xg/score.py --all` — scores base_xg parquets; enriches `data/rapm/pbp/` with `context_xg`
 3. `rapm/process_stints.py` — rebuilds stints using `context_xg` for h_xgf/a_xgf
 4. `rapm/regressions.py` — RAPM with `context_xg` as xGF target; output: `off_coeff_context_xg`, etc.
-5. `pred_goal/process_data.py` — assembles talent features; renames `context_xg` → `base_xg`; strips geometry + sequence columns
+5. `pred_goal/process_data.py` — assembles talent features; drops Tier 1 `base_xg`; carries `context_xg` through (R6); strips geometry + sequence columns
 
 ### Step 8 — Tune pred_goal model (5 parallel tabs)
 
@@ -721,8 +714,8 @@ uv run python chickenstats_xg/v1/experiments.py --model pred_goal --strength emp
 uv run python chickenstats_xg/v1/experiments.py --model pred_goal --strength empty_against --version 1.0.0 --trials 100
 ```
 
-`context_xg` (renamed to `base_xg`) is converted to log-odds and passed as `base_margin`. The
-pred_goal feature matrix contains only talent features (GxG/GSAx rolling windows, RAPM).
+`context_xg` is converted to log-odds and passed as `base_margin`. The pred_goal feature matrix
+contains only talent features (GxG/GSAx rolling windows, RAPM).
 
 ### Step 9 — Finalize pred_goal
 
@@ -775,30 +768,32 @@ Fixed:
 - `random_state: 615`
 - `monotone_constraints: {event_distance: -1, event_angle: -1}` (base_xg only; filtered to columns present)
 
-### 9.2 context_xg — XGBoost gbtree (depth=2, flag+state isolation)
+### 9.2 context_xg — XGBoost gbtree (depth=2)
 
 | Parameter | Type | Range | Notes |
 |---|---|---|---|
 | `max_delta_step` | **fixed: 1** | — | **Not tunable.** mds ≥ 2 causes bimodal cliff: large per-tree leaf updates accumulate into a high-probability cluster for flag shots. Fixed in the search space (not trial-suggested). |
-| `min_child_weight` | int (log) | 100–500 | Floor raised from 20/50 — lower values caused low-decile overestimation for SH/EF (sparse flag groups) |
-| `gamma` | float | 1.0–10.0 | Floor raised from 0.0 — prevents unconstrained splits; 1.0.0 trials span 1.4–5.7 |
-| `lambda` | float (log) | 10.0–200.0 | Floor 10.0 critical — lambda < 10 produces bimodal even with mds=1; 1.0.0 EA selected 95.62 (near old 100.0 ceiling) |
+| `min_child_weight` | int (log) | 100–500 | Floor raised from 20/50 — lower values caused low-decile overestimation for SH/EF |
+| `gamma` | float | 1.0–10.0 | Floor raised from 0.0 — prevents unconstrained splits |
+| `lambda` | float (log) | 10.0–**500.0** | Floor 10.0 critical — lambda < 10 produces bimodal even with mds=1; ceiling raised to 500 in Issue 18 (EA selected 165 in 1500-trial run near old 200 ceiling) |
 | `alpha` | float (log) | 0.1–10.0 | Floor raised from 1e-6 |
-| `subsample` | float (step 0.05) | 0.5–1.0 | Row sampling; higher floor (flag groups sparse) |
-| `learning_rate` | float (log) | 0.01–**0.20** | **Ceiling 0.20 (not 0.30).** All passing 1.0.0 models had lr ≤ 0.21. Above 0.20, TPE converges to high-lr configs that look calibrated on the anomalous 2023-24 CV test year but accumulate enough log-odds over 50–130 trees to produce a bimodal distribution on the real 2024-25 hold-out. |
+| `subsample` | float (step 0.05) | 0.5–1.0 | Row sampling |
+| `learning_rate` | float (log) | 0.01–**0.10** | **Ceiling 0.10 (lowered from 0.30 in Issue 18).** lr > 0.10 accumulates enough log-odds over 100 trees to drive goal_fp above the 0.05 hard-reject threshold. |
 | `scale_pos_weight` | float | 1.0–3.0 | Cap 3.0 (vs 10.0 for base_xg); base_margin already anchors the base rate, so spw near 1.0 is expected |
+| `colsample_bytree` | float (step 0.05) | 0.5–1.0 | Re-enabled (Issue 21 — no interaction constraints; column sampling is safe) |
+| `colsample_bylevel` | float (step 0.05) | 0.5–1.0 | Re-enabled |
+| `colsample_bynode` | float (step 0.05) | 0.5–1.0 | Re-enabled |
 
 Fixed:
 - `objective: binary:logistic`, `booster: gbtree`
-- `max_depth: 2` — fixed, not tuned. Depth-3 allows cross-group paths (defeating isolation).
+- `max_depth: 2` — fixed, not tuned. Depth-3 allows 3-feature paths (fingerprint risk)
 - `max_delta_step: 1` — fixed, not tuned. See above.
-- `interaction_constraints` — from `_build_context_interaction_constraints(list(X_train.columns))` (9 groups)
 - `base_margin` — `logit_base_xg` passed as base_margin to model.fit() in addition to its role as a feature column
-- `n_estimators: 500` (with `early_stopping_rounds: 50`)
-- `eval_metric: ["aucpr", "logloss"]` — early stopping on logloss (last metric); aucpr-only stopping caused bimodal collapse (model stopped when ranking plateaued before calibration settled)
+- `n_estimators: 100` (was 500 — Issue 18 fix), `early_stopping_rounds: 20` (was 50 — Issue 18 fix)
+- `eval_metric: ["logloss", "aucpr"]` — **early stopping on aucpr** (last metric). Logloss-based stopping causes `best_iter=0` for base_margin models (Issue 20)
 - `enable_categorical: True`
 - `random_state: 615`
-- No `colsample_*` — column sampling selects features before constraints are applied; omitting a group's features from a tree silently degenerates that constraint group
+- No `interaction_constraints` — removed Issue 21; max_depth=2 is sufficient structural protection
 
 CV: **3-fold `TimeSeriesSplit`** inside Optuna (not `shuffle`) for all tiers. A full model (no early stopping) is also trained on `X_train` and evaluated on `X_test` for final test metrics.
 
@@ -850,7 +845,7 @@ chickenstats_xg/v1/
     │
     ├── pred_goal/
     │   ├── train/
-    │   │   └── {same 5 files}             context_xg (as base_xg) + all talent features; geometry + sequence stripped
+    │   │   └── {same 5 files}             context_xg prior + all talent features; geometry + sequence stripped (R6 — process-pred-goal re-run required)
     │   └── hold_out/
     │       └── {same 5 files}
     │
@@ -1000,7 +995,7 @@ Rolling stats and RAPM are updated nightly by the scraper; RAPM is refreshed onc
 | `chickenstats_xg/v1/base_xg/run_pipeline.py` | ✅ Complete (finalize → score → context_xg process_data) |
 | `chickenstats_xg/v1/context_xg/run_pipeline.py` | ✅ Complete (finalize → score → RAPM → pred_goal process_data) |
 | `chickenstats_xg/v1/context_xg/diagnose.py` | ✅ Complete (calibration, lift, OOF gap, weight concentration) |
-| `nuke_experiment.py` | ✅ Complete |
+| `chickenstats_xg/utilities/nuke_experiment.py` | ✅ Complete (moved from chickenstats_xg/nuke_experiment.py) |
 
 ### Pipeline Execution Progress (v1.0.0)
 
@@ -1021,8 +1016,16 @@ Rolling stats and RAPM are updated nightly by the scraper; RAPM is refreshed onc
 | 12 | Issue 16 fix — context_xg score.py Booster.predict → XGBClassifier.predict_proba; RAPM recomputed | ✅ Done (2026-05-15) |
 | 13 | Issue 15 fix — strip `_1g` features + RAPM subset to xg dims + process_data.py re-run | ✅ Done (2026-05-15) |
 | 14 | Additional context_xg tuning (750→1500 ES; 1000→1500 PP/SH/EF/EA) + re-finalize `--top-n 150` + diagnostic | ✅ Done (2026-05-15) |
-| 15 | Re-tune pred_goal (500+ trials × 5 strengths — studies stale after feature change) | ⏳ Current Step |
-| 16 | Re-finalize + re-diagnose pred_goal; validate all tiers | ⬜ After step 15 |
+| 15 | Re-tune pred_goal (500 trials × 5 strengths — studies stale after Issue 15+16 feature change) | ✅ Done (2026-05-16) |
+| 16 | Re-finalize pred_goal `--top-n 15` + re-diagnose; corrected calibration, real lift on non-EA states | ✅ Done (2026-05-16) |
+| 17 | Re-tune context_xg v1.0.1 (`{strength}-1.0.1-context` studies; Issues 18+20+21 constraints applied) | ✅ Done (2026-05-18) |
+| 18 | Finalize context_xg v1.0.1 `--top-n 15` (Issues 22+23+24 applied; all 5 states pass struct gate) | ✅ Done (2026-05-18) |
+| 19 | `score-context-xg --all` + RAPM rebuild (stints → regressions) + `diagnose-rapm` | ✅ Done (2026-05-18) |
+| 20 | `diagnose-context-xg` (first run) | ✅ Done (2026-05-18) |
+| 21 | context_xg re-finalized (refresh, run 2); PP/SH/EF selected different trials; `diagnose-context-xg` re-run | ✅ Done (2026-05-18) |
+| 22 | `score-context-xg --all` re-run after refresh + RAPM re-finalized against run 2 + `diagnose-rapm` (r=0.337 ✅) | ✅ Done (2026-05-18) |
+| 23 | Re-tune pred_goal (studies stale after context_xg v1.0.1 model change) | ⏳ Pending |
+| 24 | Re-finalize pred_goal + re-diagnose | ⏳ Pending |
 
 ### Data Status
 
@@ -1035,14 +1038,14 @@ Rolling stats and RAPM are updated nightly by the scraper; RAPM is refreshed onc
 | `chickenstats_xg/v1/models/base_xg/` | ✅ Present — v1.0.0 finalized 2026-05-14 (ES/PP/SH/EF PASS, EA WARN-high-conf) |
 | `chickenstats_xg/v1/data/context_xg/train/` | ✅ Present — rebuilt 2026-05-14 |
 | `chickenstats_xg/v1/data/context_xg/hold_out/` | ✅ Present — rebuilt 2026-05-14 |
-| `chickenstats_xg/v1/data/context_xg/scored/` | ✅ Present — re-scored 2026-05-15 with Issue 16 fix (XGBClassifier, dist_ratio 1.06–1.65×) |
-| `chickenstats_xg/v1/models/context_xg/` | ✅ Present — v1.0.0 re-finalized 2026-05-15 `--top-n 150` (1500/1500 trials; ES/PP/SH WARN-high-conf; EF FAIL-OOF-gap; EA WARN-cal) |
-| `chickenstats_xg/v1/data/rapm/pbp/` | ✅ Present — re-enriched 2026-05-15 with corrected context_xg |
-| `chickenstats_xg/v1/data/rapm/stints/` | ✅ Present — rebuilt using context_xg for h_xgf/a_xgf |
-| `chickenstats_xg/v1/data/rapm/rapm_by_season.parquet` | ✅ Present — re-regressed 2026-05-15 (YOY r=0.317 PASS; all 4 checks PASS) |
+| `chickenstats_xg/v1/data/context_xg/scored/` | ✅ Present — written 2026-05-18 19:45 by `score-context-xg --all` (v1.0.1 run 1); re-run required after refresh (run 2) |
+| `chickenstats_xg/v1/models/context_xg/` | ✅ Present — v1.0.1 refreshed 2026-05-18 (run 2); PP trial 1556, SH trial 1851, EF trial 1772, ES trial 350, EA trial 1803; all 5 pass struct gate; diagnose-context-xg run 2 complete (SH 0.3476, ES 0.3658, PP 0.4139, EF 0.3859, EA 0.7820) |
+| `chickenstats_xg/v1/data/rapm/pbp/` | ✅ Present — re-enriched 2026-05-18 with context_xg run 2 |
+| `chickenstats_xg/v1/data/rapm/stints/` | ✅ Present — rebuilt 2026-05-18 using context_xg run 2 for h_xgf/a_xgf |
+| `chickenstats_xg/v1/data/rapm/rapm_by_season.parquet` | ✅ Present — re-regressed 2026-05-18 (YOY r=0.337 PASS; all 4 checks PASS) |
 | `chickenstats_xg/v1/data/pred_goal/train/` | ✅ Present — rebuilt 2026-05-15 with Issue 15+16 feature set (_1g stripped; RAPM xg only) |
 | `chickenstats_xg/v1/data/pred_goal/hold_out/` | ✅ Present — rebuilt 2026-05-15 |
-| `chickenstats_xg/v1/models/pred_goal/` | ⏳ Stale — experiments in progress (2026-05-15); re-finalize after tuning completes |
+| `chickenstats_xg/v1/models/pred_goal/` | ✅ Present — v1.0.0 re-finalized 2026-05-16 `--top-n 15` (ES/PP ✅ PASS corrected; SH ⚠️ WARN cal; EF ❌ FAIL OOF-gap structural; EA ❌ FAIL lift structural) |
 
 ---
 
@@ -1070,12 +1073,26 @@ After all training steps complete, deploy to the homelab API:
 
 ## 17. Known Gaps & Pending Work
 
-No critical blockers remain. All scripts are implemented. base_xg and context_xg are finalized and validated. Current step: `context_xg/run_pipeline.py` (Step 9 — score context_xg → rebuild RAPM → build pred_goal data).
+No critical blockers remain. All three tiers finalized and validated. Training pipeline complete.
 
 ### Non-blocking
 
-- **`pred_goal/process_data.py` — `strength_state` filter relies on hardcoded string lists.** The `strength_state_map` in `main()` maps strength names to lists of strength state strings (e.g. `"even_strength" → ["5v5", "4v4", "3v3"]`). If `chickenstats` adds new strength state strings, this map needs updating.
-- **Structural refactors** — `_objective_body()` monolith, OOF loop duplication, `sys.path.insert()` boilerplate, `model_name` variable naming. Documented in `DECISIONS.md` Proposed Refactors section. Not blocking training.
+- **`pred_goal/process_data.py` — `strength_state` filter relies on hardcoded string lists.** The `strength_state_map` in `main()` maps strength names to lists of strength state strings. If `chickenstats` adds new strength state strings, this map needs updating.
+- **Issue 19 — multi-objective (PR-AUC + log loss, NSGA-II) pending.** Currently context_xg studies are re-running (Issue 18 constraints). After they complete, multi-objective must be implemented before the next base_xg/pred_goal rebuild. See `DECISIONS.md` Issue 19.
+- **R6 — pred_goal parquets still carry `base_xg` column name.** Code changes complete (2026-05-16); `process-pred-goal` re-run required to regenerate parquets with `context_xg` naming.
+
+### Resolved
+
+- **GOAL event fingerprinting** — three-tier cascade architecture (2026-05-12). See `DECISIONS.md` Issue 7.
+- **base_xg calibration** — OOF isotonic calibration replaces Platt; `scale_pos_weight` no longer inflates outputs. See Issue 2.
+- **pred_goal context leak** — interaction features (`gax_distance_interaction`, `gsax_danger_interaction`) removed. See Issue 3.
+- **RAPM prior-season join arithmetic** — fixed `season − 10001` (was 10000). See Issue 4.
+- **empty_against calibration ceiling** — isotonic calibrator reaches ~99% for empty-net-against. See Issue 5.
+- **`pred_goal/diagnose.py` distribution check** — fixed to use `SHOT p90 / base_rate` (Issue 17).
+- **context_xg interaction constraints blocking binary flags** — constraints removed (Issue 21); `max_depth=2` is sufficient.
+- **eval_metric order causing best_iter=0** — fixed to `["logloss","aucpr"]` for base_margin models (Issue 20).
+- **Filepath depth bugs** — 4 scripts fixed to use correct `.parent` depth to reach `raw_data/pbp` (Issue 21 session).
+- **Structural refactors R1–R6** — `_objective_body()` monolith split (R1), OOF loop extracted (R2), `sys.path.insert()` removed (R3), `model_name` renamed to `strength` (R4), logging unified (R5), pred_goal column rename (R6). See `DECISIONS.md` Proposed Refactors section.
 
 ### Resolved
 
@@ -1092,4 +1109,4 @@ No critical blockers remain. All scripts are implemented. base_xg and context_xg
 
 ---
 
-*This document reflects the state as of 2026-05-15. Three-tier cascade architecture: base_xg (8 pure geometry + shot_type features, OOF isotonic calibration) → context_xg (20 features: logit_base_xg as BOTH base_margin AND feature in 9 constraint groups + binary flags + game-state modifiers + sequence, gbtree depth-2, pooled OOF + hold-out Platt calibration; finalize with `--top-n 150`; Issue 16 scoring fix applied) → pred_goal (talent features only: GxG/GSAx career/season/10g/EWMA + xg RAPM dims; logit(context_xg) as base_margin; re-tuning in progress after Issue 15 feature redesign). RAPM diagnostics: all 4 checks PASS (YOY r=0.317). Utils modularization completed 2026-05-15: finalize_utils.py, artifacts.py, diagnose_utils.py. See `chickenstats_xg/v1/planning/DECISIONS.md` for the full issue history.*
+*This document reflects the state as of 2026-05-18. Three-tier cascade architecture: base_xg (8 pure geometry + shot_type features, OOF isotonic calibration) → context_xg (21 features: logit_base_xg as BOTH base_margin AND learnable feature + binary flags + game-state modifiers + sequence features; gbtree depth-2, no interaction constraints, pooled OOF + hold-out Platt calibration; eval_metric=["logloss","aucpr"] → early stopping on aucpr; finalize with `--top-n 15`; bimodal screening via `structural_flaw_penalty > struct_cap` where struct_cap = 0.088 × null_ll) → pred_goal (talent features only: GxG/GSAx career/season/10g/EWMA + xg RAPM dims; logit(context_xg) as base_margin). v1.0.1 context_xg refreshed 2026-05-18 (run 2) — ES 0.3658, PP 0.4139, SH 0.3476, EF 0.3859, EA 0.7820; all 5 pass struct gate. RAPM rebuilt and diagnosed (PASS). Pending: score-context-xg re-run after refresh, process-pred-goal, pred_goal re-tune, Issue 19 multi-objective. See `chickenstats_xg/v1/planning/DECISIONS.md` for full issue history.*

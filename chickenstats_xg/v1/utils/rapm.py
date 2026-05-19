@@ -1,4 +1,3 @@
-
 """Shared RAPM enrichment helpers for base_xg and context_xg score.py."""
 
 from pathlib import Path
@@ -19,12 +18,7 @@ def load_scored_xg(scored_dir: Path, pred_col: str) -> pl.DataFrame:
         for s in STRENGTHS
         if (scored_dir / f"{s}.parquet").exists()
     ]
-    return (
-        pl.concat(frames)
-        .group_by(["game_id", "event_idx"])
-        .agg(pl.col(pred_col).sum())
-        .collect()
-    )
+    return pl.concat(frames).group_by(["game_id", "event_idx"]).agg(pl.col(pred_col).sum()).collect()
 
 
 def enrich_rapm_year(year_file: Path, scored_xg: pl.DataFrame, out_dir: Path, pred_col: str) -> None:
@@ -32,11 +26,7 @@ def enrich_rapm_year(year_file: Path, scored_xg: pl.DataFrame, out_dir: Path, pr
     df = pl.read_parquet(year_file)
     if pred_col in df.columns:
         df = df.drop(pred_col)
-    df = (
-        df
-        .join(scored_xg, on=["game_id", "event_idx"], how="left")
-        .with_columns(pl.col(pred_col).fill_null(0.0))
-    )
+    df = df.join(scored_xg, on=["game_id", "event_idx"], how="left").with_columns(pl.col(pred_col).fill_null(0.0))
     out_dir.mkdir(parents=True, exist_ok=True)
     df.write_parquet(out_dir / year_file.name)
 

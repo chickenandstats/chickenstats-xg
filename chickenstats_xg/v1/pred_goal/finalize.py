@@ -1,13 +1,12 @@
-
 """Retrain best pred_goal model, calibrate with OOF isotonic regression, generate SHAP, and freeze.
 
 Reads the best Optuna trial (by PR-AUC) from the given study, retrains on the full training
-parquet with base_xg as XGBoost base_margin, then writes:
+parquet with context_xg as XGBoost base_margin, then writes:
 
   models/pred_goal/{strength}_calibrator.joblib — OOF isotonic calibrator (sklearn)
   models/pred_goal/{strength}_base.ubj          — base XGBoost booster (for SHAP/inspection)
 
-Inference: base_model.predict_proba(X, base_margin=logit(base_xg))[:, 1] → calibrator.predict(raw_prob)
+Inference: base_model.predict_proba(X, base_margin=logit(context_xg))[:, 1] → calibrator.predict(raw_prob)
 
 Usage:
     python pred_goal/finalize.py --strength even_strength --version 1.0.0
@@ -36,6 +35,7 @@ import optuna
 import pandas as pd
 import shap
 import xgboost as xgb
+from chickenstats.utilities import ChickenProgress
 from dotenv import load_dotenv
 from mlflow.models.signature import infer_signature
 from sklearn.linear_model import LogisticRegression
@@ -78,19 +78,18 @@ NON_FEATURE_COLS = ["goal", "season"] + PASSTHROUGH_COLS
 def _split_df(df: pd.DataFrame, strength: str) -> tuple[pd.DataFrame, pd.Series, np.ndarray | None]:
     """Return (X_features, y, base_margin_or_None).
 
-    base_xg is extracted and converted to log-odds before being removed from X so that
+    context_xg is extracted and converted to log-odds before being removed from X so that
     pred_goal receives it as XGBoost base_margin rather than a feature.
     """
     y = df["goal"].copy()
     bm: np.ndarray | None = None
-    if "base_xg" in df.columns:
-        bm = logit(df["base_xg"].to_numpy())
+    if "context_xg" in df.columns:
+        bm = logit(df["context_xg"].to_numpy())
     drop = [c for c in NON_FEATURE_COLS if c in df.columns]
-    if "base_xg" in df.columns and "base_xg" not in drop:
-        drop = drop + ["base_xg"]
+    if "context_xg" in df.columns and "context_xg" not in drop:
+        drop = drop + ["context_xg"]
     X = apply_fixed_categoricals(df.drop(columns=drop), strength)
     return X, y, bm
-
 
 
 def _finalize_one(
@@ -104,6 +103,14 @@ def _finalize_one(
     """Retrain, calibrate, and save artifacts for a single strength state."""
     study_name = f"{strength}-{version}-pred_goal"
     study = optuna.load_study(study_name=study_name, storage=storage)
+    study_n_total = len(study.trials)
+    study_n_completed = sum(
+        1 for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE and t.values is not None
+    )
+    study_n_pareto = len(study.best_trials)
+    print(
+        f"  [{strength}] study: {study_n_total} total / {study_n_completed} completed / {study_n_pareto} Pareto-optimal"
+    )
 
     data_dir = Path(__file__).parent.parent / "data" / "pred_goal"
     train_df = pd.read_parquet(data_dir / "train" / f"{strength}.parquet")
@@ -119,9 +126,13 @@ def _finalize_one(
         "n_estimators": N_ESTIMATORS,
         "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
         "enable_categorical": True,
-        # logloss last → early stopping on logloss (calibration criterion).
-        # Matches experiments.py: PR-AUC stopping caused bimodal collapse in context_xg.
-        "eval_metric": ["aucpr", "logloss"],
+        # aucpr last → early stopping on aucpr (same rationale as context_xg finalize).
+        # pred_goal uses logit(context_xg) as base_margin; logloss briefly increases in
+        # early rounds for the same reason — model starts from a calibrated prior and
+        # logloss-based stopping selects best_iter=0. max_delta_step is set by best_params
+        # from the tuning study (not fixed here), but screen_trials hard-rejects bimodal
+        # models, providing the same protection as the structural cap in context_xg.
+        "eval_metric": ["logloss", "aucpr"],
         "monotone_constraints": {
             col: direction for col, direction in MONOTONE_CONSTRAINTS.items() if col in X_train.columns
         },
@@ -135,8 +146,14 @@ def _finalize_one(
         print(f"  [{strength}] screening top {top_n} trials by calibrated hold-out log loss...")
         candidates = select_top_trials(study, top_n, max_depth_cap=MAX_DEPTH_CAP)
         best_params, best_trial_num, best_trial = screen_trials(
-            candidates, fixed_params, X_train, y_train, X_hold_out, y_hold_out,
-            bm_train=bm_train, bm_hold_out=bm_hold_out,
+            candidates,
+            fixed_params,
+            X_train,
+            y_train,
+            X_hold_out,
+            y_hold_out,
+            bm_train=bm_train,
+            bm_hold_out=bm_hold_out,
             max_depth_cap=MAX_DEPTH_CAP,
         )
 
@@ -177,13 +194,9 @@ def _finalize_one(
     # regression instead, which fits a monotone step function and can reach 0.99
     # directly from the pooled distribution without extrapolation.
     if strength == "empty_against":
-        calibrator = IsotonicCalibrator().fit(
-            pool_probs.reshape(-1, 1), pool_labels
-        )
+        calibrator = IsotonicCalibrator().fit(pool_probs.reshape(-1, 1), pool_labels)
     else:
-        calibrator = LogisticRegression(C=1.0, max_iter=1000).fit(
-            pool_probs.reshape(-1, 1), pool_labels
-        )
+        calibrator = LogisticRegression(C=1.0, max_iter=1000).fit(pool_probs.reshape(-1, 1), pool_labels)
 
     models_dir = Path(__file__).parent.parent / "models" / "pred_goal"
     strength_dir = models_dir / strength
@@ -191,8 +204,13 @@ def _finalize_one(
     print(f"  [{strength}] saved → {strength_dir}/model.ubj + calibrator.joblib + oof.parquet")
 
     save_model_metadata(
-        models_dir, strength, "pred_goal", version, study_name, best_trial_num,
-        trial_value=best_trial.value if best_trial is not None else None,
+        models_dir,
+        strength,
+        "pred_goal",
+        version,
+        study_name,
+        best_trial_num,
+        trial_values=best_trial.values if best_trial is not None else None,
         trial=best_trial,
     )
 
@@ -208,7 +226,7 @@ def _finalize_one(
 
     raw_probs_hold_out = base_model.predict_proba(X_hold_out, base_margin=bm_hold_out)[:, 1]
     y_probs = calibrator.predict_proba(raw_probs_hold_out.reshape(-1, 1))[:, 1]
-    y_preds = (y_probs >= 0.5).astype(int)
+    y_preds = (y_probs >= float(y_hold_out.mean())).astype(int)
     hold_out_metrics = {f"hold_out_{k}": float(v) for k, v in model_metrics(y_hold_out, y_preds, y_probs).items()}
     xgb_signature = infer_signature(X_hold_out, raw_probs_hold_out)
     cal_signature = infer_signature(X_hold_out, y_probs)
@@ -224,14 +242,23 @@ def _finalize_one(
         )
 
     with run_ctx:
-        mlflow.set_tags({
-            "finalized": "true",
-            "finalized_at": datetime.now(timezone.utc).isoformat(),
-            "finalized_version": version,
-        })
+        mlflow.set_tags(
+            {
+                "finalized": "true",
+                "finalized_at": datetime.now(timezone.utc).isoformat(),
+                "finalized_version": version,
+            }
+        )
         mlflow.log_params({**params, "monotone_constraints": str(params["monotone_constraints"])})
         mlflow.log_metric("best_iteration", float(base_model.best_iteration or 0))
         mlflow.log_metrics(hold_out_metrics)
+        mlflow.log_metrics(
+            {
+                "study_total_trials": study_n_total,
+                "study_completed_trials": study_n_completed,
+                "study_pareto_front_size": study_n_pareto,
+            }
+        )
 
         plt.figure(dpi=DPI, figsize=SHAP_FIGSIZE)
         shap.summary_plot(shap_values, shap_sample, show=False, max_display=20)
@@ -262,14 +289,33 @@ def main() -> None:
     group.add_argument("--strength", "-s", type=str, choices=STRENGTHS, help="Single strength state to finalize.")
     group.add_argument("--all", "-a", action="store_true", help="Finalize all 5 strength states in sequence.")
     parser.add_argument("--version", "-v", type=str, required=True)
-    parser.add_argument("--run", "-r", type=str, default=None, help="MLflow run name to use instead of Optuna auto-selection. Cannot be combined with --all.")
-    parser.add_argument("--no-log", action="store_true", help="Skip all MLflow/SHAP/viz — just retrain, calibrate, and save files.")
     parser.add_argument(
-        "--top-n", "-n", type=int, default=15,
+        "--run",
+        "-r",
+        type=str,
+        default=None,
+        help="MLflow run name to use instead of Optuna auto-selection. Cannot be combined with --all.",
+    )
+    parser.add_argument(
+        "--no-log", action="store_true", help="Skip all MLflow/SHAP/viz — just retrain, calibrate, and save files."
+    )
+    parser.add_argument(
+        "--top-n",
+        "-n",
+        type=int,
+        default=15,
         help="Number of top CV PR-AUC trials to screen by calibrated hold-out log loss (default: 15). Ignored when --run is specified.",
     )
-    parser.add_argument("--score", action="store_true", help="Run pred_goal/score.py after finalize completes. Only valid with --all.")
-    parser.add_argument("--years", "-y", type=int, nargs="+", help="Season end-years to pass to score.py (e.g. 2024 2025). Default: all.")
+    parser.add_argument(
+        "--score", action="store_true", help="Run pred_goal/score.py after finalize completes. Only valid with --all."
+    )
+    parser.add_argument(
+        "--years",
+        "-y",
+        type=int,
+        nargs="+",
+        help="Season end-years to pass to score.py (e.g. 2024 2025). Default: all.",
+    )
     args = parser.parse_args()
 
     if args.run and args.all:
@@ -286,9 +332,13 @@ def main() -> None:
 
     strengths_to_run = STRENGTHS if args.all else [args.strength]
 
-    for strength in strengths_to_run:
-        print(f"Finalizing {strength}...")
-        _finalize_one(strength, args.version, storage, no_log=args.no_log, run_name=args.run, top_n=args.top_n)
+    with ChickenProgress() as progress:
+        task = progress.add_task(f"Finalizing {strengths_to_run[0]}...", total=len(strengths_to_run))
+        for strength in strengths_to_run:
+            progress.update(task, description=f"Finalizing {strength}...", refresh=True)
+            _finalize_one(strength, args.version, storage, no_log=args.no_log, run_name=args.run, top_n=args.top_n)
+            progress.advance(task)
+        progress.update(task, description="Finalize complete", refresh=True)
 
     if args.score:
         score_script = Path(__file__).parent / "score.py"

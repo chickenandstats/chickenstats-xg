@@ -1,4 +1,3 @@
-
 from typing import cast
 
 import polars as pl
@@ -15,16 +14,20 @@ from chickenstats_xg.v1.config import RAPM_TOI_LIMITS
 
 
 def build_position_map(pbp_df: pl.LazyFrame):
-    """Function to build a map of players and their positions."""
+    """Function to build a map of players, their positions, and their names."""
     position_map = (
         pl.concat(
             [
                 pbp_df.select(
-                    id=pl.col("home_on_api_id").str.split(", "), pos=pl.col("home_on_positions").str.split(", ")
-                ).explode(["id", "pos"]),
+                    id=pl.col("home_on_api_id").str.split(", "),
+                    pos=pl.col("home_on_positions").str.split(", "),
+                    name=pl.col("home_on").str.split(", "),
+                ).explode(["id", "pos", "name"]),
                 pbp_df.select(
-                    id=pl.col("away_on_api_id").str.split(", "), pos=pl.col("away_on_positions").str.split(", ")
-                ).explode(["id", "pos"]),
+                    id=pl.col("away_on_api_id").str.split(", "),
+                    pos=pl.col("away_on_positions").str.split(", "),
+                    name=pl.col("away_on").str.split(", "),
+                ).explode(["id", "pos", "name"]),
             ]
         )
         .unique("id")
@@ -117,7 +120,8 @@ def build_matrix(stints_df: pl.DataFrame, metric="xg", situation="EV", min_toi=1
             pl.lit(1).alias("home_adv"),
             pl.col("h_cnt").alias("off_cnt"),
             pl.col("a_cnt").alias("def_cnt"),
-        ] + date_col
+        ]
+        + date_col
     )
 
     away_stints = stints_df.select(
@@ -138,7 +142,8 @@ def build_matrix(stints_df: pl.DataFrame, metric="xg", situation="EV", min_toi=1
             pl.lit(0).alias("home_adv"),
             pl.col("a_cnt").alias("off_cnt"),
             pl.col("h_cnt").alias("def_cnt"),
-        ] + date_col
+        ]
+        + date_col
     )
 
     # Each stint is doubled: row_idx tracks which matrix row each perspective maps to
@@ -408,6 +413,9 @@ def run_all_regressions(
         player=pl.col("player_team").str.split("_").list.get(0), team=pl.col("player_team").str.split("_").list.get(1)
     )
 
+    raw_coeff_path = stints_directory.parent / "rapm_coefficients.parquet"
+    results.write_parquet(raw_coeff_path)
+
     final_results = process_regression_results(results, position_map)
 
     return final_results
@@ -440,7 +448,9 @@ def process_regression_results(regression_results: pl.DataFrame, position_map: p
         ]
     ).with_columns((pl.col("on_ice_for_60") - pl.col("on_ice_against_60")).alias("on_ice_diff_60"))
 
-    per_season = per_season.join(position_map.select(["id", "pos"]), left_on="player", right_on="id", how="left")
+    per_season = per_season.join(
+        position_map.select(["id", "pos", "name"]), left_on="player", right_on="id", how="left"
+    )
 
     final_db = per_season.pivot(
         values=[
@@ -453,7 +463,7 @@ def process_regression_results(regression_results: pl.DataFrame, position_map: p
             "on_ice_against_60",
             "on_ice_diff_60",
         ],
-        index=["season", "session", "player", "team", "pos", "situation", "toi_minutes"],
+        index=["season", "session", "player", "name", "team", "pos", "situation", "toi_minutes"],
         on="metric",
     )
 
@@ -470,30 +480,40 @@ def process_regression_results(regression_results: pl.DataFrame, position_map: p
     # Uses toi_minutes as the weight so that seasons with more ice time carry more influence.
     coeff_cols = [c for c in final_db.columns if c.startswith(("off_coeff", "def_coeff", "total_rapm"))]
 
-    career_rows = (
-        final_db
-        .group_by(["session", "player", "pos", "situation"])
-        .agg(
-            [
-                pl.lit(0).alias("season"),
-                pl.lit(None).cast(pl.Utf8).alias("team"),
-                pl.col("toi_minutes").sum(),
-            ] + [
-                (
-                    (pl.col(c) * pl.col("toi_minutes")).sum() /
-                    (pl.col("toi_minutes") * pl.col(c).is_not_null().cast(pl.Float64)).sum()
-                ).alias(c)
-                for c in coeff_cols
-            ]
-        )
+    career_rows = final_db.group_by(["session", "player", "name", "pos", "situation"]).agg(
+        [
+            pl.lit(0).alias("season"),
+            pl.lit(None).cast(pl.Utf8).alias("team"),
+            pl.col("toi_minutes").sum(),
+        ]
+        + [
+            (
+                (pl.col(c) * pl.col("toi_minutes")).sum()
+                / (pl.col("toi_minutes") * pl.col(c).is_not_null().cast(pl.Float64)).sum()
+            ).alias(c)
+            for c in coeff_cols
+        ]
     )
 
-    final_db = pl.concat([final_db, career_rows], how="diagonal_relaxed")
+    final_db = pl.concat([final_db, career_rows], how="diagonal_relaxed").with_columns(
+        pos2=pl.when(
+            pl.col("pos").is_in(
+                [
+                    "F",
+                    "C",
+                    "L",
+                    "R",
+                ]
+            )
+        )
+        .then(pl.lit("F"))
+        .otherwise(pl.col("pos"))
+    )
 
-    skip = {"season", "session", "player", "team", "pos", "situation", "toi_minutes"}
+    skip = {"season", "session", "player", "name", "team", "pos", "situation", "toi_minutes"}
     z_exprs = [
         (
-            (pl.col(col) - pl.col(col).mean().over(["season", "session", "situation", "pos"]))
+            (pl.col(col) - pl.col(col).mean().over(["season", "session", "situation", "pos2"]))
             / pl.col(col).std().over(["season", "session", "situation", "pos"])
         ).alias(f"{col}_z")
         for col in final_db.columns
@@ -506,39 +526,50 @@ def process_regression_results(regression_results: pl.DataFrame, position_map: p
 
 def main():
     """Function to run and process all regressions."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run RAPM regressions.")
+    parser.add_argument(
+        "--reprocess-only",
+        action="store_true",
+        help="Skip regressions; reload rapm_coefficients.parquet and recompute z-scores only.",
+    )
+    args = parser.parse_args()
+
     base_dir = Path(__file__).parent.parent
     rapm_pbp_dir = base_dir / "data" / "rapm" / "pbp"
+    stints_directory = base_dir / "data" / "rapm" / "stints"
+    raw_coeff_path = base_dir / "data" / "rapm" / "rapm_coefficients.parquet"
+    final_results_path = base_dir / "data" / "rapm" / "rapm_by_season.parquet"
 
     pbp_files = sorted(rapm_pbp_dir.glob("pbp_*.parquet"))
     if not pbp_files:
-        raise FileNotFoundError(
-            f"No enriched PBP parquets found in {rapm_pbp_dir}. Run rapm/prep_pbp.py first."
-        )
+        raise FileNotFoundError(f"No enriched PBP parquets found in {rapm_pbp_dir}. Run rapm/prep_pbp.py first.")
 
     all_pbp_lazy = pl.scan_parquet(pbp_files)
     position_map = build_position_map(all_pbp_lazy)
-    toi_limits = RAPM_TOI_LIMITS
 
-    seasons = sorted(cast(pl.DataFrame, all_pbp_lazy.select(pl.col("season")).unique().collect())["season"].to_list())
+    if args.reprocess_only:
+        if not raw_coeff_path.exists():
+            raise FileNotFoundError(
+                f"No checkpoint found at {raw_coeff_path}. Run without --reprocess-only first."
+            )
+        results = pl.read_parquet(raw_coeff_path)
+        regression_results = process_regression_results(results, position_map)
+    else:
+        toi_limits = RAPM_TOI_LIMITS
+        seasons = sorted(cast(pl.DataFrame, all_pbp_lazy.select(pl.col("season")).unique().collect())["season"].to_list())
+        regression_results = run_all_regressions(
+            stints_directory=stints_directory,
+            position_map=position_map,
+            seasons=seasons,
+            sessions=["R", "P"],
+            situations=["EV", "PP", "SH"],
+            metrics=["context_xg", "corsi", "goals"],
+            toi_limits=toi_limits,
+            decay_halflife=60.0,
+        )
 
-    metrics = ["context_xg", "corsi", "goals"]
-    sessions = ["R", "P"]
-    situations = ["EV", "PP", "SH"]
-
-    stints_directory = base_dir / "data" / "rapm" / "stints"
-
-    regression_results = run_all_regressions(
-        stints_directory=stints_directory,
-        position_map=position_map,
-        seasons=seasons,
-        sessions=sessions,
-        situations=situations,
-        metrics=metrics,
-        toi_limits=toi_limits,
-        decay_halflife=60.0,
-    )
-
-    final_results_path = base_dir / "data" / "rapm" / "rapm_by_season.parquet"
     regression_results.write_parquet(final_results_path, mkdir=True)
 
 

@@ -1,4 +1,3 @@
-
 """Split base_xg scored parquets into context_xg train / hold_out inputs.
 
 base_xg/scored/{strength}.parquet contains all Fenwick shots with calibrated
@@ -23,6 +22,12 @@ from chickenstats_xg.v1.config import CONTEXT_XG_FEATURE_COLUMNS, PASSTHROUGH_CO
 from chickenstats_xg.v1.utils.data_splitting import write_train_holdout_split
 
 _BM_EPS = 1e-7
+# Cap logit_base_xg at ±4.0 (sigmoid(4) ≈ 0.982) to prevent numerical spikes.
+# Without this, empty_against base_xg values near 1.0 (point-blank empty-net shots)
+# produce logit ≈ 16, pinning XGBoost raw predictions at exactly 1.0 and making
+# structural_flaw_penalty artificially large in screen_trials. Even_strength is
+# unaffected (its logit_base_xg max is ~0.9).
+_LOGIT_CAP = 4.0
 KEEP_COLS = ["season", "goal", "base_xg"] + CONTEXT_XG_FEATURE_COLUMNS + PASSTHROUGH_COLS
 
 
@@ -37,7 +42,7 @@ def process_strength(strength: str, scored_dir: Path, out_dir: Path) -> None:
     # Compute logit_base_xg — T1 prior passed as a learnable feature in each
     # flag constraint group so gbtree can learn quality-conditional flag effects.
     p = pl.col("base_xg").clip(_BM_EPS, 1 - _BM_EPS)
-    df = df.with_columns((p / (1.0 - p)).log().alias("logit_base_xg"))
+    df = df.with_columns((p / (1.0 - p)).log().clip(-_LOGIT_CAP, _LOGIT_CAP).alias("logit_base_xg"))
 
     # Keep only the columns context_xg needs; tolerate missing optional cols
     keep = [c for c in KEEP_COLS if c in df.columns]
@@ -48,8 +53,14 @@ def process_strength(strength: str, scored_dir: Path, out_dir: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build context_xg training data from base_xg scored parquets.")
-    parser.add_argument("--strength", "-s", type=str, choices=STRENGTHS, default=None,
-                        help="Single strength state. Defaults to all five.")
+    parser.add_argument(
+        "--strength",
+        "-s",
+        type=str,
+        choices=STRENGTHS,
+        default=None,
+        help="Single strength state. Defaults to all five.",
+    )
     args = parser.parse_args()
 
     base_dir = Path(__file__).parent.parent

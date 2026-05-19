@@ -1,4 +1,3 @@
-
 """Shared diagnostic utilities for base_xg, context_xg, and pred_goal diagnose.py files."""
 
 import json
@@ -21,8 +20,8 @@ FAIL = "FAIL"
 
 FINGERPRINT_PREC_WARN = 0.70
 FINGERPRINT_PREC_FAIL = 0.85
-FINGERPRINT_REC_WARN  = 0.25
-FINGERPRINT_REC_FAIL  = 0.15
+FINGERPRINT_REC_WARN = 0.25
+FINGERPRINT_REC_FAIL = 0.15
 
 CAL_MAX_ERR_WARN = 0.05
 CAL_MAX_ERR_FAIL = 0.10
@@ -90,7 +89,7 @@ def check_precision_recall_balance(
     y_pred = (p >= base_rate).astype(int)
 
     prec = float(precision_score(y, y_pred, zero_division=0))
-    rec  = float(recall_score(y, y_pred, zero_division=0))
+    rec = float(recall_score(y, y_pred, zero_division=0))
 
     if prec >= FINGERPRINT_PREC_FAIL and rec <= FINGERPRINT_REC_FAIL:
         status = FAIL
@@ -125,27 +124,31 @@ def check_oof_vs_holdout(
     OOF file has NaN for the earliest training fold (never in any validation set);
     those rows are excluded from the OOF PR-AUC to keep the estimate unbiased.
     """
-    oof_path      = models_dir / strength / "oof.parquet"
-    train_path    = data_dir   / "train"    / f"{strength}.parquet"
-    hold_out_path = data_dir   / "hold_out" / f"{strength}.parquet"
+    oof_path = models_dir / strength / "oof.parquet"
+    train_path = data_dir / "train" / f"{strength}.parquet"
+    hold_out_path = data_dir / "hold_out" / f"{strength}.parquet"
 
     missing = [p for p in (oof_path, train_path, hold_out_path) if not p.exists()]
     if missing:
         print(f"\n  OOF vs hold-out PR-AUC: missing files {[p.name for p in missing]} — skip")
         return WARN, float("nan")
 
-    oof_raw   = pd.read_parquet(oof_path)
+    oof_raw = pd.read_parquet(oof_path)
     train_raw = pd.read_parquet(train_path, columns=["game_id", "event_idx", "goal"])
-    merged    = train_raw.merge(oof_raw, on=["game_id", "event_idx"], how="inner")
-    valid     = merged.dropna(subset=[pred_col])
+    merged = train_raw.merge(oof_raw, on=["game_id", "event_idx"], how="inner")
+    valid = merged.dropna(subset=[pred_col])
     oof_prauc = float(average_precision_score(valid.goal, valid[pred_col])) if len(valid) > 0 else float("nan")
     n_dropped = len(merged) - len(valid)
 
     hold_seasons = set(pd.read_parquet(hold_out_path, columns=["season"]).season.unique())
-    hold_scored  = scored_df[scored_df.season.isin(hold_seasons)]
-    hold_prauc   = float(average_precision_score(hold_scored.goal, hold_scored[pred_col])) if len(hold_scored) > 0 else float("nan")
+    hold_scored = scored_df[scored_df.season.isin(hold_seasons)]
+    hold_prauc = (
+        float(average_precision_score(hold_scored.goal, hold_scored[pred_col]))
+        if len(hold_scored) > 0
+        else float("nan")
+    )
 
-    gap    = abs(hold_prauc - oof_prauc) if not (np.isnan(oof_prauc) or np.isnan(hold_prauc)) else float("nan")
+    gap = abs(hold_prauc - oof_prauc) if not (np.isnan(oof_prauc) or np.isnan(hold_prauc)) else float("nan")
     status = PASS if gap < warn else (WARN if gap < fail else FAIL)
 
     print(f"\n  OOF (training) vs hold-out PR-AUC")
@@ -170,20 +173,20 @@ def compute_holdout_metrics(
         prior_p: Prior-tier predictions for lift computation (base_xg for context_xg,
                  context_xg for pred_goal). None → lift = nan.
     """
-    base_rate  = float(y.mean())
-    prauc      = float(average_precision_score(y, p))
+    base_rate = float(y.mean())
+    prauc = float(average_precision_score(y, p))
     prauc_mult = prauc / base_rate if base_rate > 0 else float("nan")
-    roc        = float(roc_auc_score(y, p))
-    ll         = float(log_loss(y, p))
-    brier      = float(brier_score_loss(y, p))
+    roc = float(roc_auc_score(y, p))
+    ll = float(log_loss(y, p))
+    brier = float(brier_score_loss(y, p))
 
     eps = 1e-15
-    null_ll        = float(-(base_rate * np.log(base_rate + eps) + (1 - base_rate) * np.log(1 - base_rate + eps)))
-    ll_impr_pct    = 100.0 * (null_ll - ll) / null_ll if null_ll > 0 else 0.0
-    null_brier     = float(base_rate * (1 - base_rate))
+    null_ll = float(-(base_rate * np.log(base_rate + eps) + (1 - base_rate) * np.log(1 - base_rate + eps)))
+    ll_impr_pct = 100.0 * (null_ll - ll) / null_ll if null_ll > 0 else 0.0
+    null_brier = float(base_rate * (1 - base_rate))
     brier_impr_pct = 100.0 * (null_brier - brier) / null_brier if null_brier > 0 else 0.0
 
-    bins   = np.linspace(0.0, 1.0, 11)
+    bins = np.linspace(0.0, 1.0, 11)
     binids = np.digitize(p, bins) - 1
     ece = 0.0
     max_cal_err = 0.0
@@ -196,8 +199,8 @@ def compute_holdout_metrics(
                 max_cal_err = bin_err
 
     y_pred = (p >= base_rate).astype(int)
-    prec   = float(precision_score(y, y_pred, zero_division=0))
-    rec    = float(recall_score(y, y_pred, zero_division=0))
+    prec = float(precision_score(y, y_pred, zero_division=0))
+    rec = float(recall_score(y, y_pred, zero_division=0))
 
     if prior_p is not None:
         lift = prauc - float(average_precision_score(y, prior_p))
@@ -205,22 +208,22 @@ def compute_holdout_metrics(
         lift = float("nan")
 
     return {
-        "Base Rate":              base_rate,
-        "PR AUC":                 prauc,
-        "PR AUC Multiplier":      prauc_mult,
-        "ROC AUC":                roc,
-        "Log Loss":               ll,
-        "Null Log Loss":          null_ll,
+        "Base Rate": base_rate,
+        "PR AUC": prauc,
+        "PR AUC Multiplier": prauc_mult,
+        "ROC AUC": roc,
+        "Log Loss": ll,
+        "Null Log Loss": null_ll,
         "Log Loss Improvement %": ll_impr_pct,
-        "Brier Score":            brier,
-        "Null Brier":             null_brier,
-        "Brier Improvement %":    brier_impr_pct,
-        "ECE":                    ece,
-        "Max Calibration Error":  max_cal_err,
-        "OOF Gap":                oof_gap,
-        "Lift":                   lift,
-        "Precision":              prec,
-        "Recall":                 rec,
+        "Brier Score": brier,
+        "Null Brier": null_brier,
+        "Brier Improvement %": brier_impr_pct,
+        "ECE": ece,
+        "Max Calibration Error": max_cal_err,
+        "OOF Gap": oof_gap,
+        "Lift": lift,
+        "Precision": prec,
+        "Recall": rec,
     }
 
 
@@ -233,14 +236,18 @@ def print_holdout_metrics(
     """Print the standard hold-out metrics block. Pass lift_label to show the lift line."""
     m = metrics
     oof_gap = m.get("OOF Gap", float("nan"))
-    lift    = m.get("Lift", float("nan"))
+    lift = m.get("Lift", float("nan"))
 
     print(f"\n  Hold-out metrics  (season {season_label},  n={n:,})")
     print(f"    Base rate:         {m['Base Rate']:.4f}  ({100 * m['Base Rate']:.1f}%)")
     print(f"    PR AUC:            {m['PR AUC']:.4f}  (×{m['PR AUC Multiplier']:.2f} vs null)")
     print(f"    ROC AUC:           {m['ROC AUC']:.4f}")
-    print(f"    Log loss:          {m['Log Loss']:.4f}  (null {m['Null Log Loss']:.4f},  {m['Log Loss Improvement %']:+.1f}% vs null)")
-    print(f"    Brier score:       {m['Brier Score']:.4f}  (null {m['Null Brier']:.4f},  {m['Brier Improvement %']:+.1f}% vs null)")
+    print(
+        f"    Log loss:          {m['Log Loss']:.4f}  (null {m['Null Log Loss']:.4f},  {m['Log Loss Improvement %']:+.1f}% vs null)"
+    )
+    print(
+        f"    Brier score:       {m['Brier Score']:.4f}  (null {m['Null Brier']:.4f},  {m['Brier Improvement %']:+.1f}% vs null)"
+    )
     print(f"    ECE:               {m['ECE']:.4f}")
     print(f"    Max cal error:     {m['Max Calibration Error']:.4f}  (uniform bins)")
     if not np.isnan(oof_gap):
@@ -291,20 +298,20 @@ def extract_model_hyperparams(model_path: Path) -> dict | None:
         try:
             p = json.loads(params_json_path.read_text())
             return {
-                "max_depth":         float(p["max_depth"])         if "max_depth"         in p else None,
-                "min_child_weight":  float(p["min_child_weight"])  if "min_child_weight"  in p else None,
-                "max_delta_step":    float(p["max_delta_step"])    if "max_delta_step"    in p else None,
-                "eta":               float(p["learning_rate"])     if "learning_rate"     in p else None,
-                "gamma":             float(p["gamma"])             if "gamma"             in p else None,
-                "lambda_":           float(p["lambda"])            if "lambda"            in p else None,
-                "alpha":             float(p["alpha"])             if "alpha"             in p else None,
-                "subsample":         float(p["subsample"])         if "subsample"         in p else None,
-                "colsample_bytree":  float(p["colsample_bytree"])  if "colsample_bytree"  in p else None,
+                "max_depth": float(p["max_depth"]) if "max_depth" in p else None,
+                "min_child_weight": float(p["min_child_weight"]) if "min_child_weight" in p else None,
+                "max_delta_step": float(p["max_delta_step"]) if "max_delta_step" in p else None,
+                "eta": float(p["learning_rate"]) if "learning_rate" in p else None,
+                "gamma": float(p["gamma"]) if "gamma" in p else None,
+                "lambda_": float(p["lambda"]) if "lambda" in p else None,
+                "alpha": float(p["alpha"]) if "alpha" in p else None,
+                "subsample": float(p["subsample"]) if "subsample" in p else None,
+                "colsample_bytree": float(p["colsample_bytree"]) if "colsample_bytree" in p else None,
                 "colsample_bylevel": float(p["colsample_bylevel"]) if "colsample_bylevel" in p else None,
-                "colsample_bynode":  float(p["colsample_bynode"])  if "colsample_bynode"  in p else None,
-                "scale_pos_weight":  float(p["scale_pos_weight"])  if "scale_pos_weight"  in p else None,
-                "best_iteration":    best_iter,
-                "n_trees":           n_trees,
+                "colsample_bynode": float(p["colsample_bynode"]) if "colsample_bynode" in p else None,
+                "scale_pos_weight": float(p["scale_pos_weight"]) if "scale_pos_weight" in p else None,
+                "best_iteration": best_iter,
+                "n_trees": n_trees,
             }
         except Exception:
             pass
@@ -312,11 +319,7 @@ def extract_model_hyperparams(model_path: Path) -> dict | None:
     # Fallback: booster save_config() — returns XGBoost internal defaults, not actual params.
     try:
         config = json.loads(booster.save_config())
-        tp = (
-            config.get("learner", {})
-                  .get("gradient_booster", {})
-                  .get("tree_train_param", {})
-        )
+        tp = config.get("learner", {}).get("gradient_booster", {}).get("tree_train_param", {})
 
         def _float(d: dict, key: str) -> float | None:
             v = d.get(key)
@@ -342,20 +345,20 @@ def extract_model_hyperparams(model_path: Path) -> dict | None:
                     pass
 
         return {
-            "max_depth":         _float(tp, "max_depth"),
-            "min_child_weight":  _float(tp, "min_child_weight"),
-            "max_delta_step":    _float(tp, "max_delta_step"),
-            "eta":               _float(tp, "eta"),
-            "gamma":             _float(tp, "min_split_loss"),
-            "lambda_":           _float(tp, "reg_lambda"),
-            "alpha":             _float(tp, "reg_alpha"),
-            "subsample":         _float(tp, "subsample"),
-            "colsample_bytree":  _float(tp, "colsample_bytree"),
+            "max_depth": _float(tp, "max_depth"),
+            "min_child_weight": _float(tp, "min_child_weight"),
+            "max_delta_step": _float(tp, "max_delta_step"),
+            "eta": _float(tp, "eta"),
+            "gamma": _float(tp, "min_split_loss"),
+            "lambda_": _float(tp, "reg_lambda"),
+            "alpha": _float(tp, "reg_alpha"),
+            "subsample": _float(tp, "subsample"),
+            "colsample_bytree": _float(tp, "colsample_bytree"),
             "colsample_bylevel": _float(tp, "colsample_bylevel"),
-            "colsample_bynode":  _float(tp, "colsample_bynode"),
-            "scale_pos_weight":  spw,
-            "best_iteration":    best_iter,
-            "n_trees":           n_trees,
+            "colsample_bynode": _float(tp, "colsample_bynode"),
+            "scale_pos_weight": spw,
+            "best_iteration": best_iter,
+            "n_trees": n_trees,
         }
     except Exception:
         return None

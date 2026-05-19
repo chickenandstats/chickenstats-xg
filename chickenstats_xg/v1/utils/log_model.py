@@ -120,17 +120,17 @@ def _log_one(tier: str, strength: str, base_dir: Path) -> None:
     else:
         study_name = f"{strength}-{version}-{_STUDY_SUFFIX[tier]}"
         mlflow.set_experiment(study_name)
-        run_ctx = mlflow.start_run(
-            tags={"type": "finalize", "strength": strength, "version": version}
-        )
+        run_ctx = mlflow.start_run(tags={"type": "finalize", "strength": strength, "version": version})
 
     with run_ctx:
-        mlflow.set_tags({
-            "finalized": "true",
-            "logged_from": "local",
-            "logged_at": datetime.now(timezone.utc).isoformat(),
-            "finalized_version": version,
-        })
+        mlflow.set_tags(
+            {
+                "finalized": "true",
+                "logged_from": "local",
+                "logged_at": datetime.now(timezone.utc).isoformat(),
+                "finalized_version": version,
+            }
+        )
 
         model_info = mlflow.xgboost.log_model(model, name=run_name, signature=signature)
         mlflow.register_model(model_uri=model_info.model_uri, name=f"{tier}_{strength}")
@@ -153,11 +153,15 @@ def main() -> None:
     tier_group.add_argument("--tier", "-t", type=str, choices=TIERS, help="Single tier to log.")
     tier_group.add_argument("--all", "-a", action="store_true", help="Log all tiers × all strengths.")
     parser.add_argument(
-        "--strength", "-s", type=str, choices=STRENGTHS,
+        "--strength",
+        "-s",
+        type=str,
+        choices=STRENGTHS,
         help="Single strength state (required unless --all is used with --tier, or --all is used alone).",
     )
     parser.add_argument(
-        "--strengths-all", action="store_true",
+        "--strengths-all",
+        action="store_true",
         help="Log all strength states for the specified --tier.",
     )
     args = parser.parse_args()

@@ -36,6 +36,8 @@ xg_fields = {
     "prior_event_angle": {"dtype": float, "nullable": True, "default": False, "required": True},
     "prior_event_distance": {"dtype": float, "nullable": True, "default": False, "required": True},
     "seconds_since_stoppage": {"dtype": float, "nullable": True, "default": False, "required": True},
+    "seconds_since_event_team_change": {"dtype": float, "nullable": True, "default": False, "required": True},
+    "seconds_since_opp_team_change": {"dtype": float, "nullable": True, "default": False, "required": True},
     "abs_y_distance": {"dtype": float, "nullable": False, "default": False, "required": True},
     "prior_event_same": {"dtype": str, "nullable": True, "default": False, "required": True},
     "prior_event_opp": {"dtype": str, "nullable": True, "default": False, "required": True},
@@ -118,8 +120,18 @@ xg_fields = {
     "shooter_vs_teammates_rapm_goals_off": {"dtype": float, "nullable": True, "default": False, "required": False},
     # Shooter vs. teammates differential career — TOI-weighted mean versions
     "shooter_vs_teammates_rapm_career_xg_off": {"dtype": float, "nullable": True, "default": False, "required": False},
-    "shooter_vs_teammates_rapm_career_corsi_off": {"dtype": float, "nullable": True, "default": False, "required": False},
-    "shooter_vs_teammates_rapm_career_goals_off": {"dtype": float, "nullable": True, "default": False, "required": False},
+    "shooter_vs_teammates_rapm_career_corsi_off": {
+        "dtype": float,
+        "nullable": True,
+        "default": False,
+        "required": False,
+    },
+    "shooter_vs_teammates_rapm_career_goals_off": {
+        "dtype": float,
+        "nullable": True,
+        "default": False,
+        "required": False,
+    },
 }
 
 xg_pandera_polars = build_pandera_schema(
@@ -133,6 +145,26 @@ def prep_data(
     """Docstring."""
     if "pred_goal" in df.columns:
         df = df.drop(["pred_goal"])
+
+    # CHANGE events are excluded from the event filter below, so compute last line-change
+    # time per team NOW while they are still present. Forward-fill within each game using
+    # is_home to distinguish home (1) vs away (0) team changes. The two temp columns
+    # survive the filter and are resolved to seconds_since_event_team_change /
+    # seconds_since_opp_team_change after the Fenwick filter.
+    df = df.with_columns(
+        pl.when((pl.col("event") == "CHANGE") & (pl.col("is_home") == 1))
+        .then(pl.col("game_seconds"))
+        .otherwise(None)
+        .forward_fill()
+        .over(["season", "game_id"])
+        .alias("_last_change_home"),
+        pl.when((pl.col("event") == "CHANGE") & (pl.col("is_home") == 0))
+        .then(pl.col("game_seconds"))
+        .otherwise(None)
+        .forward_fill()
+        .over(["season", "game_id"])
+        .alias("_last_change_away"),
+    )
 
     events = [
         "SHOT",
@@ -196,9 +228,7 @@ def prep_data(
         score_diff=pl.when(pl.col("score_diff") > 4)
         .then(pl.lit(4))
         .otherwise(pl.when(pl.col("score_diff") < -4).then(pl.lit(-4)).otherwise(pl.col("score_diff"))),
-        seconds_since_last=pl.when(
-            *conditions, pl.col("game_seconds") > pl.col("game_seconds").shift(1)
-        )
+        seconds_since_last=pl.when(*conditions, pl.col("game_seconds") > pl.col("game_seconds").shift(1))
         .then(pl.col("game_seconds") - pl.col("game_seconds").shift(1))
         .otherwise(float("nan")),
         distance_from_last=pl.when(conditions)
@@ -218,7 +248,9 @@ def prep_data(
             & pl.col("event").shift(1).is_in(["GIVE", "TAKE"])
             & (pl.col("game_seconds") > pl.col("game_seconds").shift(1))
             & (_sec_diff <= 4)
-        ).then(pl.lit(1)).otherwise(pl.lit(0)),
+        )
+        .then(pl.lit(1))
+        .otherwise(pl.lit(0)),
         prior_face=pl.when(prior_faceoff_conditions).then(pl.lit(1)).otherwise(pl.lit(0)),
         prior_event_angle=pl.when(_base_cond).then(pl.col("event_angle").shift(1)).otherwise(float("nan")),
         prior_event_distance=pl.when(_base_cond).then(pl.col("event_distance").shift(1)).otherwise(float("nan")),
@@ -226,12 +258,16 @@ def prep_data(
             _base_cond
             & (pl.col("event_team") == pl.col("event_team").shift(1))
             & pl.col("event").shift(1).is_in(_prior_event_types)
-        ).then(pl.col("event").shift(1)).otherwise(None),
+        )
+        .then(pl.col("event").shift(1))
+        .otherwise(None),
         prior_event_opp=pl.when(
             _base_cond
             & (pl.col("event_team") != pl.col("event_team").shift(1))
             & pl.col("event").shift(1).is_in(_prior_event_types)
-        ).then(pl.col("event").shift(1)).otherwise(None),
+        )
+        .then(pl.col("event").shift(1))
+        .otherwise(None),
     )
 
     df = df.with_columns(
@@ -248,9 +284,26 @@ def prep_data(
         .otherwise(None),
         seconds_since_stoppage=pl.when(pl.col("game_seconds") > pl.col("_last_face_seconds"))
         .then((pl.col("game_seconds") - pl.col("_last_face_seconds")).cast(pl.Float64))
-        .otherwise(None).cast(pl.Float64),
+        .otherwise(None)
+        .cast(pl.Float64),
         abs_y_distance=pl.col("coords_y").abs(),
+        # Resolve home/away change times to event-team / opp-team from the shot's perspective.
+        _last_change_event_team=pl.when(pl.col("is_home") == 1)
+        .then(pl.col("_last_change_home"))
+        .otherwise(pl.col("_last_change_away")),
+        _last_change_opp_team=pl.when(pl.col("is_home") == 1)
+        .then(pl.col("_last_change_away"))
+        .otherwise(pl.col("_last_change_home")),
     ).drop("_last_face_seconds")
+
+    df = df.with_columns(
+        seconds_since_event_team_change=pl.when(pl.col("_last_change_event_team").is_not_null())
+        .then((pl.col("game_seconds") - pl.col("_last_change_event_team")).cast(pl.Float64))
+        .otherwise(None),
+        seconds_since_opp_team_change=pl.when(pl.col("_last_change_opp_team").is_not_null())
+        .then((pl.col("game_seconds") - pl.col("_last_change_opp_team")).cast(pl.Float64))
+        .otherwise(None),
+    ).drop(["_last_change_home", "_last_change_away", "_last_change_event_team", "_last_change_opp_team"])
 
     df = df.with_columns(
         shot_type=pl.col("shot_type").str.to_lowercase().str.replace_all("-", "_").str.replace_all(" ", "_")
@@ -281,6 +334,8 @@ def prep_data(
         "prior_event_angle",
         "prior_event_distance",
         "seconds_since_stoppage",
+        "seconds_since_event_team_change",
+        "seconds_since_opp_team_change",
         "abs_y_distance",
         "prior_event_same",
         "prior_event_opp",

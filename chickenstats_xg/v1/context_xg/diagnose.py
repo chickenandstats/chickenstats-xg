@@ -1,4 +1,3 @@
-
 """context_xg overfitting / calibration diagnostic.
 
 Run from repo root:
@@ -26,8 +25,11 @@ from sklearn.metrics import average_precision_score
 
 from chickenstats_xg.v1.config import STRENGTHS
 from chickenstats_xg.v1.utils.diagnose_utils import (
-    PASS, WARN, FAIL,
-    status_icon, pct,
+    PASS,
+    WARN,
+    FAIL,
+    status_icon,
+    pct,
     check_calibration,
     check_precision_recall_balance,
     check_oof_vs_holdout,
@@ -38,7 +40,7 @@ from chickenstats_xg.v1.utils.diagnose_utils import (
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 _BASE = _Path(__file__).parent.parent
-DATA_DIR   = _BASE / "data"   / "context_xg"
+DATA_DIR = _BASE / "data" / "context_xg"
 MODELS_DIR = _BASE / "models" / "context_xg"
 
 # ── thresholds ─────────────────────────────────────────────────────────────────
@@ -62,6 +64,7 @@ _PR_FIX = "enforce max_delta_step=1 in Optuna search space; raise lambda floor t
 
 # ── Check 1: GOAL vs SHOT distribution ────────────────────────────────────────
 
+
 def check_distribution(df: pd.DataFrame, strength: str) -> tuple[str, float]:
     """SHOT p90 / base_rate bimodal check.
 
@@ -71,9 +74,9 @@ def check_distribution(df: pd.DataFrame, strength: str) -> tuple[str, float]:
     shots = df.loc[df.goal == 0, "context_xg"]
     goals = df.loc[df.goal == 1, "context_xg"]
 
-    shot_p90  = shots.quantile(0.90)
+    shot_p90 = shots.quantile(0.90)
     base_rate = len(goals) / (len(goals) + len(shots))
-    ratio     = shot_p90 / base_rate if base_rate > 1e-9 else float("inf")
+    ratio = shot_p90 / base_rate if base_rate > 1e-9 else float("inf")
 
     status = PASS if ratio < SHOT_P90_BASE_RATIO_WARN else (WARN if ratio < SHOT_P90_BASE_RATIO_FAIL else FAIL)
 
@@ -94,17 +97,18 @@ def check_distribution(df: pd.DataFrame, strength: str) -> tuple[str, float]:
 
 # ── Check 2: high-confidence event rate ───────────────────────────────────────
 
+
 def check_high_confidence(df: pd.DataFrame) -> str:
     """% of events above HIGH_CONF threshold, split by GOAL / SHOT.
 
     Thresholds scale with base rate so high-base-rate states (e.g. empty_against
     ~57%) are not penalised for naturally elevated predictions.
     """
-    n_goals   = (df.goal == 1).sum()
-    n_shots   = (df.goal == 0).sum()
+    n_goals = (df.goal == 1).sum()
+    n_shots = (df.goal == 0).sum()
     base_rate = n_goals / (n_goals + n_shots) if (n_goals + n_shots) > 0 else 0.0
 
-    scale        = max(1.0, base_rate / _BASE_RATE_REF)
+    scale = max(1.0, base_rate / _BASE_RATE_REF)
     adj_goal_warn = min(HIGH_CONF_GOAL_WARN * scale, 50.0)
     adj_goal_fail = min(HIGH_CONF_GOAL_FAIL * scale, 80.0)
     adj_shot_warn = min(HIGH_CONF_SHOT_WARN * scale, 10.0)
@@ -117,7 +121,7 @@ def check_high_confidence(df: pd.DataFrame) -> str:
 
     goal_status = PASS if pct_g < adj_goal_warn else (WARN if pct_g < adj_goal_fail else FAIL)
     shot_status = PASS if pct_s < adj_shot_warn else WARN
-    overall     = FAIL if FAIL in (goal_status, shot_status) else (WARN if WARN in (goal_status, shot_status) else PASS)
+    overall = FAIL if FAIL in (goal_status, shot_status) else (WARN if WARN in (goal_status, shot_status) else PASS)
 
     print(f"\n  High-confidence events (context_xg > {HIGH_CONF})")
     print(f"    GOAL: {high_goals:>6,} / {n_goals:,}  ({pct_g:5.1f}%)  {status_icon(goal_status)} {goal_status}")
@@ -127,16 +131,17 @@ def check_high_confidence(df: pd.DataFrame) -> str:
 
 # ── Check 5: lift over base_xg ────────────────────────────────────────────────
 
+
 def check_lift(df: pd.DataFrame) -> str:
     """context_xg PR-AUC vs base_xg PR-AUC on the same scored data."""
     if "base_xg" not in df.columns:
         print("\n  Lift over base_xg: base_xg column not present in scored parquet — skip")
         return WARN
 
-    valid      = df.dropna(subset=["base_xg", "context_xg"])
+    valid = df.dropna(subset=["base_xg", "context_xg"])
     base_prauc = float(average_precision_score(valid.goal, valid.base_xg))
-    ctx_prauc  = float(average_precision_score(valid.goal, valid.context_xg))
-    lift       = ctx_prauc - base_prauc
+    ctx_prauc = float(average_precision_score(valid.goal, valid.context_xg))
+    lift = ctx_prauc - base_prauc
 
     status = PASS if lift >= LIFT_WARN else (WARN if lift > LIFT_FAIL else FAIL)
 
@@ -149,24 +154,26 @@ def check_lift(df: pd.DataFrame) -> str:
 
 # ── Check 7: PR-AUC by season ─────────────────────────────────────────────────
 
+
 def check_season_prauc(scored_df: pd.DataFrame) -> None:
     """PR-AUC broken out by season. No pass/fail — informational only."""
     has_base = "base_xg" in scored_df.columns
     print(f"\n  PR-AUC by season")
     print(f"  {'Season':>8}  {'n_shots':>9}  {'n_goals':>9}  {'goal%':>7}  {'base_xg':>8}  {'ctx_xg':>8}")
     for season in sorted(scored_df.season.unique()):
-        sub     = scored_df[scored_df.season == season]
+        sub = scored_df[scored_df.season == season]
         n_goals = int((sub.goal == 1).sum())
         n_shots = int((sub.goal == 0).sum())
         if n_goals < 10:
             continue
         ctx_prauc = average_precision_score(sub.goal, sub.context_xg)
         goal_rate = 100 * n_goals / len(sub)
-        base_str  = f"{average_precision_score(sub.goal, sub.base_xg):>8.4f}" if has_base else f"{'—':>8}"
+        base_str = f"{average_precision_score(sub.goal, sub.base_xg):>8.4f}" if has_base else f"{'—':>8}"
         print(f"  {season:>8}  {n_shots:>9,}  {n_goals:>9,}  {goal_rate:>6.1f}%  {base_str}  {ctx_prauc:>8.4f}")
 
 
 # ── Check 8: feature gain concentration ───────────────────────────────────────
+
 
 def check_feature_gain_concentration(strength: str) -> str:
     """gbtree feature gain distribution — flags single-feature dominance."""
@@ -187,7 +194,7 @@ def check_feature_gain_concentration(strength: str) -> str:
         print("\n  Feature gain: no gains returned — skip")
         return WARN
 
-    total  = sum(importance.values())
+    total = sum(importance.values())
     ranked = sorted(importance.items(), key=lambda x: x[1], reverse=True)
     top_feat, top_gain = ranked[0]
     top_pct = top_gain / total if total > 0 else 0.0
@@ -210,6 +217,7 @@ def check_feature_gain_concentration(strength: str) -> str:
 
 # ── Check 8b: hyperparameter assessment ───────────────────────────────────────
 
+
 def check_hyperparameters(strength: str) -> None:
     """Extract hyperparameters from the frozen context_xg booster and opine on appropriateness.
 
@@ -218,44 +226,50 @@ def check_hyperparameters(strength: str) -> None:
     root cause of the calibration failures documented in Issues 11 and 12.
     """
     import json as _json
+
     model_path = MODELS_DIR / strength / "model.ubj"
-    meta_path  = MODELS_DIR / strength / "meta.json"
+    meta_path = MODELS_DIR / strength / "meta.json"
 
     params = extract_model_hyperparams(model_path)
     if params is None:
         print(f"\n  Hyperparameters: model not found at {model_path} — skip")
         return
 
-    trial_num = trial_val = None
+    trial_num = trial_vals = None
     if meta_path.exists():
         meta = _json.loads(meta_path.read_text())
-        trial_num = meta.get("trial_num")
-        trial_val = meta.get("trial_value")
+        trial_num = meta.get("optuna_trial_number")
+        trial_vals = meta.get("optuna_trial_values")
 
     print(f"\n  Hyperparameters (from saved booster + meta.json)")
     if trial_num is not None:
-        tv_str = f"  (CV PR-AUC: {trial_val:.4f})" if trial_val is not None else ""
+        if trial_vals is not None:
+            tv_str = f"  (PR-AUC: {trial_vals[0]:.4f}  log-loss: {trial_vals[1]:.4f})"
+        else:
+            tv_str = ""
         print(f"    Optuna trial {trial_num}{tv_str}")
 
     rows = [
-        ("max_depth",         params["max_depth"]),
-        ("min_child_weight",  params["min_child_weight"]),
-        ("max_delta_step",    params["max_delta_step"]),
+        ("max_depth", params["max_depth"]),
+        ("min_child_weight", params["min_child_weight"]),
+        ("max_delta_step", params["max_delta_step"]),
         ("eta (learning_rate)", params["eta"]),
-        ("gamma",             params["gamma"]),
-        ("lambda",            params["lambda_"]),
-        ("alpha",             params["alpha"]),
-        ("subsample",         params["subsample"]),
-        ("scale_pos_weight",  params["scale_pos_weight"]),
-        ("best_iteration",    params["best_iteration"]),
-        ("n_trees",           params["n_trees"]),
+        ("gamma", params["gamma"]),
+        ("lambda", params["lambda_"]),
+        ("alpha", params["alpha"]),
+        ("subsample", params["subsample"]),
+        ("scale_pos_weight", params["scale_pos_weight"]),
+        ("best_iteration", params["best_iteration"]),
+        ("n_trees", params["n_trees"]),
     ]
     print(f"  {'Parameter':<24}  {'Value':>10}")
     for name, val in rows:
         if val is None:
             continue
-        val_str = f"{int(val)}" if isinstance(val, float) and val == int(val) else (
-            f"{val:.4f}" if isinstance(val, float) else str(val)
+        val_str = (
+            f"{int(val)}"
+            if isinstance(val, float) and val == int(val)
+            else (f"{val:.4f}" if isinstance(val, float) else str(val))
         )
         print(f"  {name:<24}  {val_str:>10}")
 
@@ -263,8 +277,8 @@ def check_hyperparameters(strength: str) -> None:
     mds = params["max_delta_step"]
     mcw = params["min_child_weight"]
     lam = params["lambda_"]
-    bi  = params["best_iteration"]
-    nt  = params["n_trees"]
+    bi = params["best_iteration"]
+    nt = params["n_trees"]
 
     if mds is not None and mds > 1:
         issues.append(
@@ -276,13 +290,17 @@ def check_hyperparameters(strength: str) -> None:
     if lam is not None and lam < 1.0:
         issues.append(f"WARN  lambda={lam:.4f} below expected floor of ~1.0 for constrained-feature dataset")
     if lam is not None and lam > 40:
-        issues.append(f"INFO  lambda={lam:.1f} — strong L2 shrinkage (expected for depth-2 gbtree with isolated constraint groups)")
+        issues.append(
+            f"INFO  lambda={lam:.1f} — strong L2 shrinkage (expected for depth-2 gbtree with isolated constraint groups)"
+        )
     if mcw is not None and mcw < 50 and strength in ("shorthanded", "empty_for"):
         issues.append(f"WARN  min_child_weight={int(mcw)} below recommended ≥50 for {strength} (sparse flag groups)")
     if bi is not None and nt is not None and bi >= nt - 10:
         issues.append(f"INFO  best_iteration={bi} near n_trees limit — early stopping may not have fired")
     if bi is not None and bi < 30:
-        issues.append(f"INFO  best_iteration={bi} — expected range for mds=1 + moderate eta; low tree count confirmed non-bimodal")
+        issues.append(
+            f"INFO  best_iteration={bi} — expected range for mds=1 + moderate eta; low tree count confirmed non-bimodal"
+        )
 
     print()
     if issues:
@@ -293,6 +311,7 @@ def check_hyperparameters(strength: str) -> None:
 
 
 # ── Check 5b: hold-out performance metrics ────────────────────────────────────
+
 
 def check_holdout_metrics(
     strength: str,
@@ -311,9 +330,9 @@ def check_holdout_metrics(
         print("\n  Hold-out metrics: no scored events match hold-out seasons — skip")
         return {}
 
-    y        = df.goal.to_numpy()
-    p        = df.context_xg.to_numpy()
-    prior_p  = df.base_xg.to_numpy() if "base_xg" in df.columns else None
+    y = df.goal.to_numpy()
+    p = df.context_xg.to_numpy()
+    prior_p = df.base_xg.to_numpy() if "base_xg" in df.columns else None
     season_label = sorted(hold_seasons)[-1]
 
     metrics = compute_holdout_metrics(y, p, oof_gap=oof_gap, prior_p=prior_p)
@@ -323,35 +342,36 @@ def check_holdout_metrics(
 
 # ── main ───────────────────────────────────────────────────────────────────────
 
+
 def run_strength(strength: str) -> tuple[dict[str, str], dict[str, float]]:
     scored_path = DATA_DIR / "scored" / f"{strength}.parquet"
     if not scored_path.exists():
         print(f"\n  {strength}: scored parquet missing — skip")
         return {}, {}
 
-    df   = pd.read_parquet(scored_path)
+    df = pd.read_parquet(scored_path)
     keep = [c for c in ["game_id", "event_idx", "goal", "context_xg", "base_xg", "season"] if c in df.columns]
-    df   = df[keep]
+    df = df[keep]
 
-    dist_status, _      = check_distribution(df, strength)
-    hc_status           = check_high_confidence(df)
-    pr_status           = check_precision_recall_balance(df, "context_xg", fix_message=_PR_FIX)
-    cal_status          = check_calibration(df, "context_xg")
+    dist_status, _ = check_distribution(df, strength)
+    hc_status = check_high_confidence(df)
+    pr_status = check_precision_recall_balance(df, "context_xg", fix_message=_PR_FIX)
+    cal_status = check_calibration(df, "context_xg")
     oof_status, oof_gap = check_oof_vs_holdout(strength, df, "context_xg", DATA_DIR, MODELS_DIR)
-    lift_status         = check_lift(df)
-    gain_status         = check_feature_gain_concentration(strength)
+    lift_status = check_lift(df)
+    gain_status = check_feature_gain_concentration(strength)
     check_season_prauc(df)
     check_hyperparameters(strength)
     metrics = check_holdout_metrics(strength, df, oof_gap=oof_gap)
 
     statuses = {
-        "distribution":   dist_status,
+        "distribution": dist_status,
         "high_confidence": hc_status,
-        "pr_balance":     pr_status,
-        "calibration":    cal_status,
+        "pr_balance": pr_status,
+        "calibration": cal_status,
         "oof_vs_holdout": oof_status,
-        "lift":           lift_status,
-        "gain_conc":      gain_status,
+        "lift": lift_status,
+        "gain_conc": gain_status,
     }
     overall = FAIL if FAIL in statuses.values() else (WARN if WARN in statuses.values() else PASS)
     print(f"\n  {status_icon(overall)} Overall [{strength}]: {overall}")
@@ -360,15 +380,16 @@ def run_strength(strength: str) -> tuple[dict[str, str], dict[str, float]]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="context_xg overfitting / calibration diagnostic")
-    parser.add_argument("--strength", "-s", choices=STRENGTHS, default=None,
-                        help="Single strength state (default: all 5)")
+    parser.add_argument(
+        "--strength", "-s", choices=STRENGTHS, default=None, help="Single strength state (default: all 5)"
+    )
     args = parser.parse_args()
 
     warnings.filterwarnings("ignore")
 
     strengths = [args.strength] if args.strength else STRENGTHS
     all_statuses: dict[str, dict[str, str]] = {}
-    all_metrics:  dict[str, dict[str, float]] = {}
+    all_metrics: dict[str, dict[str, float]] = {}
 
     print("=" * 62)
     print("  context_xg overfitting / calibration diagnostic")
@@ -377,14 +398,14 @@ def main() -> None:
     for s in strengths:
         statuses, metrics = run_strength(s)
         all_statuses[s] = statuses
-        all_metrics[s]  = metrics
+        all_metrics[s] = metrics
 
     # Pass/fail summary table
     print(f"\n{'=' * 62}")
     print(f"  Summary")
     print(f"{'─' * 62}")
-    checks  = ["distribution", "high_confidence", "pr_balance", "calibration", "oof_vs_holdout", "lift", "gain_conc"]
-    headers = ["distribut",    "high_conf",        "pr_bal",     "calibrat",    "oof_gap",        "lift", "gain_conc"]
+    checks = ["distribution", "high_confidence", "pr_balance", "calibration", "oof_vs_holdout", "lift", "gain_conc"]
+    headers = ["distribut", "high_conf", "pr_bal", "calibrat", "oof_gap", "lift", "gain_conc"]
     print(f"  {'Strength':<20}  " + "  ".join(f"{h:>9}" for h in headers))
     for s, statuses in all_statuses.items():
         if not statuses:
@@ -407,8 +428,8 @@ def main() -> None:
     for s, m in all_metrics.items():
         if not m:
             continue
-        oof_str  = f"{m['OOF Gap']:>7.4f}" if not np.isnan(m.get("OOF Gap", float("nan"))) else f"{'—':>7}"
-        lift_str = f"{m['Lift']:>+7.4f}"   if not np.isnan(m.get("Lift",    float("nan"))) else f"{'—':>7}"
+        oof_str = f"{m['OOF Gap']:>7.4f}" if not np.isnan(m.get("OOF Gap", float("nan"))) else f"{'—':>7}"
+        lift_str = f"{m['Lift']:>+7.4f}" if not np.isnan(m.get("Lift", float("nan"))) else f"{'—':>7}"
         print(
             f"  {s:<20}  {100 * m['Base Rate']:>5.1f}%  {m['PR AUC']:>7.4f}  {m['PR AUC Multiplier']:>5.2f}×  {m['ROC AUC']:>8.4f}"
             f"  {m['Log Loss']:>8.4f}  {m['Null Log Loss']:>7.4f}  {m['Log Loss Improvement %']:>+5.1f}%"

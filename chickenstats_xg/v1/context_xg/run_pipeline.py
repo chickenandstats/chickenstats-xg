@@ -64,22 +64,38 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run context_xg finalize → score → RAPM → pred_goal data prep pipeline."
     )
-    parser.add_argument("--version", "-v", required=True,
-                        help="Model version string passed to finalize.py (e.g. 1.0.0)")
-    parser.add_argument("--years", "-y", type=int, nargs="+",
-                        help="Season end-years to score (e.g. 2023 2024 2025). Default: all.")
-    parser.add_argument("--no-log", action="store_true",
-                        help="Pass --no-log to finalize.py (skip MLflow logging).")
-    parser.add_argument("--top-n", "-n", type=int, default=15,
-                        help="Number of top CV PR-AUC trials to screen by calibrated hold-out log loss (default: 15). Use 150 for context_xg (see Issue 12).")
-    parser.add_argument("--skip-finalize", action="store_true",
-                        help="Skip step 1 (context_xg finalize). Use if models already frozen.")
-    parser.add_argument("--skip-score", action="store_true",
-                        help="Skip step 2 (context_xg score + RAPM PBP enrichment). Use if scored parquets exist.")
-    parser.add_argument("--skip-rapm", action="store_true",
-                        help="Skip steps 3–4 (RAPM stints + regressions). Use if RAPM outputs already built.")
-    parser.add_argument("--skip-process", action="store_true",
-                        help="Skip step 5 (pred_goal/process_data.py). Use if pred_goal train/hold_out already split.")
+    parser.add_argument(
+        "--version", "-v", required=True, help="Model version string passed to finalize.py (e.g. 1.0.0)"
+    )
+    parser.add_argument(
+        "--years", "-y", type=int, nargs="+", help="Season end-years to score (e.g. 2023 2024 2025). Default: all."
+    )
+    parser.add_argument("--no-log", action="store_true", help="Pass --no-log to finalize.py (skip MLflow logging).")
+    parser.add_argument(
+        "--top-n",
+        "-n",
+        type=int,
+        default=15,
+        help="Number of top CV PR-AUC trials to screen by calibrated hold-out log loss (default: 15). Use 150 for context_xg (see Issue 12).",
+    )
+    parser.add_argument(
+        "--skip-finalize", action="store_true", help="Skip step 1 (context_xg finalize). Use if models already frozen."
+    )
+    parser.add_argument(
+        "--skip-score",
+        action="store_true",
+        help="Skip step 2 (context_xg score + RAPM PBP enrichment). Use if scored parquets exist.",
+    )
+    parser.add_argument(
+        "--skip-rapm",
+        action="store_true",
+        help="Skip steps 3–4 (RAPM stints + regressions). Use if RAPM outputs already built.",
+    )
+    parser.add_argument(
+        "--skip-process",
+        action="store_true",
+        help="Skip step 5 (pred_goal/process_data.py). Use if pred_goal train/hold_out already split.",
+    )
     args = parser.parse_args()
 
     py = sys.executable

@@ -56,24 +56,24 @@ BASE_XG_FEATURE_COLUMNS: list[str] = [
 ]
 
 # Tier 2 — sequence context + game-state modifiers for the gbtree middle tier.
-# logit_base_xg carries the T1 spatial prior as a learnable feature and is paired
-# individually with each state/flag so that depth-2 trees answer exactly one question:
-# "given this spatial prior, how much does THIS game-state factor shift danger?"
-# Combining two state features on one path is structurally impossible at depth=2.
+# logit_base_xg is both the base_margin (T1 spatial prior) and a learnable feature.
+# max_depth=2 limits each path to at most 2 features — the structural protection against
+# complex fingerprint paths. No interaction_constraints are set (they blocked binary flags
+# from competing with continuous features; at depth=2 they add no additional safety).
 # prior_event_same and prior_event_opp are passed as pd.Categorical.
 # position and strength_state are also pd.Categorical (handled by _apply_fixed_categoricals).
 CONTEXT_XG_FEATURE_COLUMNS: list[str] = [
-    "logit_base_xg",       # T1 spatial prior — present in every interaction group
+    "logit_base_xg",  # T1 spatial prior — present in every interaction group
     # Binary event flags — each paired individually with logit_base_xg (groups 0-3)
-    "is_rebound",          # interaction group 0
-    "is_scramble",         # interaction group 1
-    "rush_attempt",        # interaction group 2
-    "prior_face",          # interaction group 3
+    "is_rebound",  # interaction group 0
+    "is_scramble",  # interaction group 1
+    "rush_attempt",  # interaction group 2
+    "prior_face",  # interaction group 3
     # Game-state modifiers — each paired individually with logit_base_xg (groups 4-7)
-    "is_home",             # interaction group 4: home-ice tactical proxy
-    "position",            # interaction group 5: shooter personnel (F vs D)
-    "strength_state",      # interaction group 6: ice openness (5v5, 3v3, etc.)
-    "score_diff",          # interaction group 7: score effects / era-drift isolated here
+    "is_home",  # interaction group 4: home-ice tactical proxy
+    "position",  # interaction group 5: shooter personnel (F vs D)
+    "strength_state",  # interaction group 6: ice openness (5v5, 3v3, etc.)
+    "score_diff",  # interaction group 7: score effects / era-drift isolated here
     # Continuous sequence block — all interact together with logit_base_xg (group 8)
     "play_speed",
     "seconds_since_last",
@@ -81,18 +81,20 @@ CONTEXT_XG_FEATURE_COLUMNS: list[str] = [
     "prior_event_angle",
     "prior_event_distance",
     "seconds_since_stoppage",
-    "period",              # ice degradation / desperation proxy
-    "period_seconds",      # end-of-period timing
-    "prior_event_same",    # categorical
-    "prior_event_opp",     # categorical
+    "seconds_since_event_team_change",  # interaction group 8: time since shooting team's last line change
+    "seconds_since_opp_team_change",  # interaction group 8: time since opposing team's last line change
+    "period",  # ice degradation / desperation proxy
+    "period_seconds",  # end-of-period timing
+    "prior_event_same",  # categorical
+    "prior_event_opp",  # categorical
 ]
 
-# Interaction constraint groups for context_xg gbtree (depth=2).
-# Each group limits which features can share a single tree path.
-# State/flag features are isolated in their own pair with logit_base_xg —
-# this structurally prevents any two game-state features from combining on one path.
-# The continuous block includes logit_base_xg so sequence features can ask
-# "how does rush speed modify the spatial prior?" at depth 2.
+# Interaction constraint groups — retained for reference only; no longer passed to XGBoost.
+# The original per-flag isolation design prevented binary flags (is_rebound, is_scramble,
+# strength_state) from competing against the continuous block for tree allocation: all
+# 100 boosting rounds went to group 8, leaving flag groups with zero importance despite
+# real signal (rebound goal rate 15% vs base_xg 11.3%). Removing constraints at depth=2
+# is safe because each path can hold at most 2 features regardless.
 CONTEXT_XG_INTERACTION_GROUPS: list[list[str]] = [
     ["logit_base_xg", "is_rebound"],
     ["logit_base_xg", "is_scramble"],
@@ -104,16 +106,32 @@ CONTEXT_XG_INTERACTION_GROUPS: list[list[str]] = [
     ["logit_base_xg", "score_diff"],
     [
         "logit_base_xg",
-        "play_speed", "seconds_since_last", "distance_from_last",
-        "prior_event_angle", "prior_event_distance", "seconds_since_stoppage",
-        "period", "period_seconds",
-        "prior_event_same", "prior_event_opp",
+        "play_speed",
+        "seconds_since_last",
+        "distance_from_last",
+        "prior_event_angle",
+        "prior_event_distance",
+        "seconds_since_stoppage",
+        "seconds_since_event_team_change",
+        "seconds_since_opp_team_change",
+        "period",
+        "period_seconds",
+        "prior_event_same",
+        "prior_event_opp",
     ],
 ]
 
 # XGBoost architecture — shared between tuning (experiments.py) and finalize scripts
 N_ESTIMATORS: int = 500
 EARLY_STOPPING_ROUNDS: int = 50
+
+# context_xg-specific budget constraints to prevent GOAL-side fingerprinting.
+# Capping n_estimators at 100 with early_stopping_rounds=20 limits best_iter to ≤80.
+# Combined with lr ceiling 0.10 in experiments.py: max accumulated log-odds ≈ 3.1
+# (lr × best_iter × effective_fraction ≈ 0.10 × 80 × 0.385), which prevents low-geometry
+# shots (base_xg ≈ 5%) from being pushed above ~58% by contextual features alone.
+N_ESTIMATORS_CONTEXT_XG: int = 100
+EARLY_STOPPING_ROUNDS_CONTEXT_XG: int = 20
 
 # TimeSeriesSplit folds: fewer during tuning (speed), more for OOF calibration (coverage)
 CV_TUNE_FOLDS: int = 3
@@ -130,44 +148,35 @@ MONOTONE_CONSTRAINTS: dict[str, int] = {
 # constraints are needed. Kept as an empty list for script compatibility.
 BASE_XG_INTERACTION_GROUPS: list[list[str]] = []
 
-# context_xg discriminates the same events as base_xg, so PR-AUC scale is the same.
-# These thresholds gate artifact uploads exactly as in base_xg.
-CONTEXT_XG_PERF_THRESHOLDS: dict[str, dict[str, float]] = {
-    "even_strength": {"very_high": 0.30, "high": 0.23, "medium": 0.17, "cutoff": 0.12},
-    "powerplay":     {"very_high": 0.36, "high": 0.28, "medium": 0.21, "cutoff": 0.14},
-    "shorthanded":   {"very_high": 0.28, "high": 0.22, "medium": 0.16, "cutoff": 0.11},
-    "empty_for":     {"very_high": 0.43, "high": 0.35, "medium": 0.27, "cutoff": 0.19},
-    "empty_against": {"very_high": 0.88, "high": 0.81, "medium": 0.73, "cutoff": 0.65},
-}
-
-# Per-strength PR-AUC thresholds for performance tagging.
-# Goal rates vary widely across states (EV ~7%, PP ~15%, EA ~80%+), so flat thresholds would
-# either over-upload artifacts on high-rate states or never fire on low-rate ones.
-# Log-loss is logged for monitoring but excluded from the gate: label smoothing (eps=0.05)
-# systematically inflates log-loss on binary targets, causing well-performing trials to
-# be mis-tagged "none" despite good PR-AUC. PR-AUC alone matches Optuna's objective.
+# Per-strength composite-score thresholds for performance tagging (controls artifact upload).
+# Composite = PR-AUC − 0.5 × log_loss, matching the Pareto ranking in select_top_trials().
+# Thresholds are anchored ~0.04–0.20 above each strength's null composite
+# (null_composite ≈ base_rate − 0.5 × H(base_rate)) so near-random models always tag "none".
+# Goal rates vary widely (EV ~7%, PP ~15%, EA ~80%+), so per-strength calibration is required.
+# These are initial estimates — adjust after the first full v1.0.1 tuning run if tiers shift.
 PERF_THRESHOLDS: dict[str, dict[str, float]] = {
-    "even_strength": {"very_high": 0.25, "high": 0.18, "medium": 0.13, "cutoff": 0.08},
-    "powerplay":     {"very_high": 0.28, "high": 0.21, "medium": 0.15, "cutoff": 0.10},
-    "shorthanded":   {"very_high": 0.22, "high": 0.17, "medium": 0.12, "cutoff": 0.08},
-    "empty_for":     {"very_high": 0.35, "high": 0.27, "medium": 0.20, "cutoff": 0.13},
-    "empty_against": {"very_high": 0.75, "high": 0.68, "medium": 0.60, "cutoff": 0.52},
+    "even_strength": {"very_high": 0.12, "high": 0.06, "medium": 0.00, "cutoff": -0.04},
+    "powerplay": {"very_high": 0.14, "high": 0.08, "medium": 0.02, "cutoff": -0.02},
+    "shorthanded": {"very_high": 0.13, "high": 0.07, "medium": 0.01, "cutoff": -0.03},
+    "empty_for": {"very_high": 0.17, "high": 0.11, "medium": 0.05, "cutoff": 0.01},
+    "empty_against": {"very_high": 0.75, "high": 0.69, "medium": 0.63, "cutoff": 0.59},
 }
 
 
 def compute_performance_tag(prauc: float, log_loss_val: float, strength: str) -> str:
-    """Return a performance tier tag based on per-strength PR-AUC thresholds.
+    """Return a performance tier tag based on per-strength composite-score thresholds.
 
-    log_loss_val is accepted for call-site compatibility but not used for gating —
-    label smoothing inflates log-loss on binary targets, making it an unreliable gate.
+    Composite = PR-AUC − 0.5 × log_loss. Using both objectives ensures that models with
+    high discrimination but poor calibration don't gate artifact uploads as "high" or better.
     """
+    composite = prauc - 0.5 * log_loss_val
     t = PERF_THRESHOLDS.get(strength, PERF_THRESHOLDS["even_strength"])
-    if prauc < t["cutoff"]:
+    if composite < t["cutoff"]:
         return "none"
-    if prauc >= t["very_high"]:
+    if composite >= t["very_high"]:
         return "very high"
-    if prauc >= t["high"]:
+    if composite >= t["high"]:
         return "high"
-    if prauc >= t["medium"]:
+    if composite >= t["medium"]:
         return "medium"
     return "low"

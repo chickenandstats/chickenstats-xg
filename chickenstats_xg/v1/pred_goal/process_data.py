@@ -1,4 +1,3 @@
-
 """Assemble pred_goal training data from scored context_xg parquets.
 
 Pipeline:
@@ -86,14 +85,10 @@ def _load_rapm(rapm_path: Path) -> tuple[pl.DataFrame, pl.DataFrame]:
     return per_season, career
 
 
-def _join_shooter_rapm(
-    df: pl.DataFrame, per_season: pl.DataFrame, career: pl.DataFrame
-) -> pl.DataFrame:
+def _join_shooter_rapm(df: pl.DataFrame, per_season: pl.DataFrame, career: pl.DataFrame) -> pl.DataFrame:
     """Join shooter prior-season (lagged) and career RAPM for all 6 dims → 12 columns."""
     # Prior season: join season S event to season S-1 RAPM
-    prior = per_season.rename(
-        {"player": "player_1_api_id"} | {d: f"shooter_rapm_{d}" for d in _RAPM_DIMS}
-    )
+    prior = per_season.rename({"player": "player_1_api_id"} | {d: f"shooter_rapm_{d}" for d in _RAPM_DIMS})
     df = df.with_columns((pl.col("season") - 10001).alias("_prev_season"))
     df = df.join(
         prior,
@@ -103,9 +98,7 @@ def _join_shooter_rapm(
     ).drop("_prev_season")
 
     # Career: join on player + situation only (no season lag)
-    career_j = career.rename(
-        {"player": "player_1_api_id"} | {d: f"shooter_rapm_career_{d}" for d in _RAPM_DIMS}
-    )
+    career_j = career.rename({"player": "player_1_api_id"} | {d: f"shooter_rapm_career_{d}" for d in _RAPM_DIMS})
     df = df.join(
         career_j,
         left_on=["player_1_api_id", "_rapm_situation"],
@@ -133,9 +126,7 @@ def _join_aggregate_rapm(
     Returns a DataFrame with columns (_row_idx, {out_prior_prefix}*, {out_career_prefix}*).
     on_ice must already contain: _row_idx, season, _rapm_situation, {entity_col}.
     """
-    prior = per_season.rename(
-        {"player": entity_col} | {d: f"{prior_raw_prefix}{d}" for d in _RAPM_DIMS}
-    )
+    prior = per_season.rename({"player": entity_col} | {d: f"{prior_raw_prefix}{d}" for d in _RAPM_DIMS})
     on_ice = on_ice.with_columns((pl.col("season") - 10001).alias("_prev_season"))
     on_ice = on_ice.join(
         prior,
@@ -144,9 +135,7 @@ def _join_aggregate_rapm(
         how="left",
     ).drop("_prev_season")
 
-    career_j = career.rename(
-        {"player": entity_col} | {d: f"{career_raw_prefix}{d}" for d in _RAPM_DIMS}
-    )
+    career_j = career.rename({"player": entity_col} | {d: f"{career_raw_prefix}{d}" for d in _RAPM_DIMS})
     on_ice = on_ice.join(
         career_j,
         left_on=[entity_col, "_rapm_situation"],
@@ -155,16 +144,16 @@ def _join_aggregate_rapm(
     )
 
     first_dim = _RAPM_DIMS[0]
-    prior_agg  = [pl.col(f"{prior_raw_prefix}{d}").drop_nulls().mean().alias(f"_prior_{d}_mean") for d in _RAPM_DIMS]
+    prior_agg = [pl.col(f"{prior_raw_prefix}{d}").drop_nulls().mean().alias(f"_prior_{d}_mean") for d in _RAPM_DIMS]
     career_agg = [pl.col(f"{career_raw_prefix}{d}").drop_nulls().mean().alias(f"_career_{d}_mean") for d in _RAPM_DIMS]
-    count_agg  = [
+    count_agg = [
         pl.col(f"{prior_raw_prefix}{first_dim}").drop_nulls().len().alias(count_prior_col),
         pl.col(f"{career_raw_prefix}{first_dim}").drop_nulls().len().alias(count_career_col),
     ]
 
     grouped = on_ice.group_by("_row_idx").agg(prior_agg + career_agg + count_agg)
 
-    prior_out  = [
+    prior_out = [
         pl.when(pl.col(count_prior_col) >= MIN_WITH_RAPM)
         .then(pl.col(f"_prior_{d}_mean"))
         .otherwise(None)
@@ -180,16 +169,10 @@ def _join_aggregate_rapm(
     ]
     output_cols = [c for d in _RAPM_DIMS for c in (f"{out_prior_prefix}{d}", f"{out_career_prefix}{d}")]
 
-    return (
-        grouped
-        .with_columns(prior_out + career_out)
-        .select(["_row_idx"] + output_cols)
-    )
+    return grouped.with_columns(prior_out + career_out).select(["_row_idx"] + output_cols)
 
 
-def _compute_teammates_rapm(
-    df: pl.DataFrame, per_season: pl.DataFrame, career: pl.DataFrame
-) -> pl.DataFrame:
+def _compute_teammates_rapm(df: pl.DataFrame, per_season: pl.DataFrame, career: pl.DataFrame) -> pl.DataFrame:
     """Compute mean RAPM of on-ice teammates (shooter excluded) for all dims × prior + career.
 
     Adds teammates_rapm_{dim} and teammates_rapm_career_{dim} columns, plus
@@ -220,7 +203,9 @@ def _compute_teammates_rapm(
     )
 
     teammates_mean = _join_aggregate_rapm(
-        on_ice, per_season, career,
+        on_ice,
+        per_season,
+        career,
         entity_col="_teammate_id",
         prior_raw_prefix="_tm_prior_",
         career_raw_prefix="_tm_career_",
@@ -235,19 +220,19 @@ def _compute_teammates_rapm(
     for metric in _OFF_METRICS:
         d = f"{metric}_off"
         diff_exprs.append(
-            (pl.col(f"shooter_rapm_{d}") - pl.col(f"teammates_rapm_{d}"))
-            .alias(f"shooter_vs_teammates_rapm_{metric}_off")
+            (pl.col(f"shooter_rapm_{d}") - pl.col(f"teammates_rapm_{d}")).alias(
+                f"shooter_vs_teammates_rapm_{metric}_off"
+            )
         )
         diff_exprs.append(
-            (pl.col(f"shooter_rapm_career_{d}") - pl.col(f"teammates_rapm_career_{d}"))
-            .alias(f"shooter_vs_teammates_rapm_career_{metric}_off")
+            (pl.col(f"shooter_rapm_career_{d}") - pl.col(f"teammates_rapm_career_{d}")).alias(
+                f"shooter_vs_teammates_rapm_career_{metric}_off"
+            )
         )
     return df.with_columns(diff_exprs)
 
 
-def _compute_opponent_rapm(
-    df: pl.DataFrame, per_season: pl.DataFrame, career: pl.DataFrame
-) -> pl.DataFrame:
+def _compute_opponent_rapm(df: pl.DataFrame, per_season: pl.DataFrame, career: pl.DataFrame) -> pl.DataFrame:
     """Compute mean RAPM of opposing on-ice skaters for all dims × prior + career → 12 columns.
 
     Uses away_on_api_id when is_home == 1, home_on_api_id otherwise.
@@ -275,7 +260,9 @@ def _compute_opponent_rapm(
     )
 
     opp_mean = _join_aggregate_rapm(
-        on_ice, per_season, career,
+        on_ice,
+        per_season,
+        career,
         entity_col="_opp_id",
         prior_raw_prefix="_opp_prior_",
         career_raw_prefix="_opp_career_",
@@ -291,8 +278,8 @@ def main() -> None:
     """Assemble pred_goal training and hold-out data."""
     data_dir = Path(__file__).parent.parent / "data"
     # Tier 2 (context_xg) scored parquets are the base_margin source for pred_goal.
-    # They contain both base_xg (Tier 1) and context_xg (Tier 2) columns; we rename
-    # context_xg → base_xg so experiments.py's base_margin extraction is unchanged.
+    # They contain both base_xg (Tier 1) and context_xg (Tier 2). Drop Tier 1;
+    # context_xg keeps its own name throughout the pred_goal pipeline.
     scored_dir = data_dir / "context_xg" / "scored"
     rapm_path = data_dir / "rapm" / "rapm_by_season.parquet"
 
@@ -301,12 +288,9 @@ def main() -> None:
     for strength, situation in track(STRENGTH_RAPM_SITUATION.items(), description="Loading scored parquets..."):
         raw = pl.read_parquet(scored_dir / f"{strength}.parquet")
         # context_xg parquets carry both base_xg (Tier 1) and context_xg (Tier 2).
-        # Promote context_xg → base_xg (pred_goal's base_margin source) and drop the
-        # old Tier 1 column so there's exactly one base_xg column downstream.
-        if "context_xg" in raw.columns:
-            if "base_xg" in raw.columns:
-                raw = raw.drop("base_xg")
-            raw = raw.rename({"context_xg": "base_xg"})
+        # Drop the Tier 1 column; context_xg stays as context_xg.
+        if "base_xg" in raw.columns:
+            raw = raw.drop("base_xg")
         df = raw.with_columns(pl.lit(situation).alias("_rapm_situation"))
         frames.append(df)
 

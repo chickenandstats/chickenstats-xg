@@ -1,4 +1,3 @@
-
 from chickenstats_xg.v1.utils.diagnose_utils import (
     PASS,
     WARN,

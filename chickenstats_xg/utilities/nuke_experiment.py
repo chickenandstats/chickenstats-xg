@@ -58,6 +58,7 @@ from sqlalchemy import create_engine, inspect, text
 
 # ── S3 helpers ────────────────────────────────────────────────────────────────
 
+
 def _s3_client():
     return boto3.client(
         "s3",
@@ -92,6 +93,7 @@ def _delete_s3_prefix(s3, bucket: str, prefix: str) -> int:
 
 # ── MLflow hard-delete helpers ───────────────────────────────────────────────
 
+
 def _mlflow_hard_delete_gc(backend_uri: str, experiment_id: str, dry_run: bool) -> None:
     """Hard-delete via `mlflow gc` (official path).
 
@@ -99,9 +101,14 @@ def _mlflow_hard_delete_gc(backend_uri: str, experiment_id: str, dry_run: bool) 
     Con: re-attempts S3 artifact deletion, which can hang on slow endpoints.
     """
     cmd = [
-        sys.executable, "-m", "mlflow", "gc",
-        "--backend-store-uri", backend_uri,
-        "--experiment-ids", experiment_id,
+        sys.executable,
+        "-m",
+        "mlflow",
+        "gc",
+        "--backend-store-uri",
+        backend_uri,
+        "--experiment-ids",
+        experiment_id,
     ]
     if dry_run:
         print(f"  [mlflow] [dry] would run: {' '.join(cmd)}")
@@ -118,6 +125,7 @@ def _mlflow_hard_delete_gc(backend_uri: str, experiment_id: str, dry_run: bool) 
 
 
 # ── MLflow hard-delete via direct SQL ────────────────────────────────────────
+
 
 def _mlflow_hard_delete_sql(
     backend_uri: str,
@@ -169,8 +177,7 @@ def _mlflow_hard_delete_sql(
             if "inputs" in existing:
                 rows = conn.execute(
                     text(
-                        "SELECT input_uuid FROM inputs "
-                        "WHERE destination_id = ANY(:ids) AND destination_type = 'RUN'"
+                        "SELECT input_uuid FROM inputs " "WHERE destination_id = ANY(:ids) AND destination_type = 'RUN'"
                     ),
                     {"ids": run_ids},
                 ).fetchall()
@@ -200,6 +207,7 @@ def _mlflow_hard_delete_sql(
 
 # ── Optuna helpers ────────────────────────────────────────────────────────────
 
+
 def _optuna_storage() -> optuna.storages.RDBStorage:
     db_host = os.environ.get("DB_HOST")
     db_user = os.environ["DB_USER"]
@@ -213,6 +221,7 @@ def _optuna_storage() -> optuna.storages.RDBStorage:
 
 
 # ── Main nuke logic ───────────────────────────────────────────────────────────
+
 
 def nuke(study_name: str, *, dry_run: bool, use_gc: bool = False) -> None:
     client = mlflow.tracking.MlflowClient()
@@ -305,6 +314,7 @@ def nuke(study_name: str, *, dry_run: bool, use_gc: bool = False) -> None:
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     load_dotenv()

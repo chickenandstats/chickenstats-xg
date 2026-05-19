@@ -1,4 +1,3 @@
-
 from pathlib import Path
 from typing import Literal, cast
 
@@ -74,7 +73,7 @@ def main():
 
         for year in years:
             progress.update(progress_task, description=f"Reading {year}...", refresh=True)
-            filepath: Path = Path(__file__).parent.parent.parent / "raw_data" / "pbp" / f"pbp_{year}.parquet"
+            filepath: Path = Path(__file__).parent.parent.parent.parent / "raw_data" / "pbp" / f"pbp_{year}.parquet"
             raw_by_year[year] = pl.read_parquet(filepath, columns=READ_COLS)
             progress.update(progress_task, advance=1, refresh=True)
 
