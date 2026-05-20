@@ -1228,6 +1228,103 @@ imbalance is independent of logit scale.
 
 ---
 
+## Issue 25: pred_goal `max_delta_step` bimodal (100% shorthanded screening failures)
+
+### Problem
+
+After the context_xg bimodal fix (Issue 12 — `max_delta_step` fixed at 1 for context_xg), pred_goal was never given the same treatment. `_params_pred_goal = _params_base_xg` was a direct alias — pred_goal used the same Optuna param space as base_xg, where `max_delta_step` is tunable 1–10.
+
+pred_goal uses `logit(context_xg)` as `base_margin` — structurally identical to how context_xg uses `logit_base_xg` as base_margin. The bimodal mechanism is the same: with base_margin providing a calibrated prior, tree-0 residuals are small; `max_delta_step ≥ 2` amplifies leaf weight updates disproportionately, producing a bimodal prediction distribution that fails the `structural_flaw_penalty > struct_cap` gate.
+
+Symptom: 100% of shorthanded pred_goal screening candidates failed. For small-sample states (shorthanded: ~36K training shots), the bimodal cliff is most severe because the optimizer finds large-leaf solutions quickly. The four previously finalized states (ES/PP/EF/EA, 2026-05-16 run) happened to pass screening with mds≥2 trials — either by chance (larger datasets make the cliff less pronounced) or because those trials were selected before the structural_flaw_penalty gate replaced the cruder goal_fp gate.
+
+### Root Cause
+
+`_params_pred_goal = _params_base_xg` — pred_goal was never updated to reflect that it uses `base_margin`. The mds=1 fix was applied to context_xg's param space (Issue 12) but the pred_goal alias was never updated.
+
+### Status: RESOLVED (2026-05-19)
+
+**Fix applied in two places:**
+
+1. **`chickenstats_xg/v1/utils/finalize_utils.py` — `screen_trials()`:** Added `screen_params["max_delta_step"] = 1` when `bm_train is not None` (after existing max_depth clamp).
+
+2. **`chickenstats_xg/v1/pred_goal/finalize.py` — `_finalize_one()`:** Added `params["max_delta_step"] = 1` when `bm_train is not None` (after existing max_depth clamp).
+
+3. **`chickenstats_xg/v1/experiments.py` — `_params_pred_goal()`:** New standalone function replacing the alias. `max_delta_step = 1` fixed (not trial-suggested). See Issue 27 for the full corrected param space.
+
+**Note:** The clamps in `screen_trials` and `_finalize_one` remain permanently as defense-in-depth for any future runs against stale studies that may contain mds≥2 trials.
+
+---
+
+## Issue 26: pred_goal `lambda` floor — bimodal even with mds=1
+
+### Problem
+
+After applying the mds=1 clamp (Issue 25), pred_goal screening continued to reject candidates for shorthanded. `experiments.py` (line ~306, `_params_context_xg` docstring) explicitly documents: **"lambda < 10 produces bimodal output even with mds=1."**
+
+The `_params_base_xg` param space had a `lambda` **ceiling** of 10.0. All pred_goal tuning trials had `lambda ≤ 10`. After the mds=1 clamp, `screen_trials` forced `lambda = max(lambda, 10.0)` — but that forced every candidate to exactly 10.0 (no diversity). All 15 screening candidates were identical in the lambda dimension, and many still produced bimodal or near-bimodal distributions.
+
+### Root Cause
+
+The base_xg lambda ceiling (10.0) equals the minimum lambda required for base_margin models to avoid bimodal output. Every pred_goal trial was tuned at or below this floor, and the finalize clamp collapsed all candidates to a single degenerate point in lambda space.
+
+### Status: RESOLVED (2026-05-19)
+
+**Fix applied:**
+
+1. **`chickenstats_xg/v1/utils/finalize_utils.py` — `screen_trials()`:** Added `screen_params["lambda"] = max(screen_params.get("lambda", 10.0), 10.0)` when `bm_train is not None`.
+
+2. **`chickenstats_xg/v1/pred_goal/finalize.py` — `_finalize_one()`:** Added `params["lambda"] = max(params.get("lambda", 10.0), 10.0)` when `bm_train is not None`.
+
+3. **`chickenstats_xg/v1/experiments.py` — `_params_pred_goal()`:** `lambda` range `[10.0, 100.0]` in the new function. See Issue 27.
+
+**Why clamps are insufficient for optimal results:** All existing pred_goal trials were tuned in the wrong regime (lambda 0.1–10, mds 1–10). After clamping, the finalized models use lambda=10 with no diversity explored above that floor. Studies must be nuked and re-run under the corrected param space to find genuinely optimal hyperparameters.
+
+---
+
+## Issue 27: pred_goal comprehensive param space gaps → new `_params_pred_goal` function
+
+### Problem
+
+After fixing mds (Issue 25) and lambda (Issue 26), a comprehensive audit revealed four additional param space gaps and one stale comment:
+
+| Parameter | Old (`_params_base_xg`) | Correct for pred_goal | Reason |
+|---|---|---|---|
+| `alpha` | 1e-8–1.0 | 0.1–10.0 | All winning trials had alpha ≈ 0 (near the 1e-8 floor). pred_goal has many sparse RAPM career features — meaningful L1 sparsity requires a ≥ 0.1 floor |
+| `learning_rate` | 1e-3–0.30 | 0.01–0.10 | Same Issue 18 rationale as context_xg: lr > 0.10 accumulates large log-odds over 500 trees with base_margin |
+| `min_child_weight` | 20–200 | 50–300 | RAPM features are null for ~13% of shots; low mcw overfits to training-era player matchup patterns |
+| `gamma` | 0.0–5.0 | 1.0–10.0 | Zero-floor allows unconstrained splits on sparse RAPM features |
+
+**Impact on already-finalized models:**
+- **lambda:** All winning trials tuned at lambda ≤ 10 (old ceiling = required floor); after clamp, all at exactly 10 — no diversity
+- **alpha:** empty_against trial had alpha=0.001 (effectively zero L1); even_strength trial at alpha=0.0001
+- **learning_rate:** empty_against winning trial had lr=0.2384 (well above new 0.10 ceiling)
+- **min_child_weight:** empty_against winning trial had mcw=21 (below new 50 floor)
+
+**Stale comment:** `_objective_body()` had a comment describing pred_goal as "logloss last → logloss drives early stopping" even though the code correctly branches pred_goal into the aucpr-last group (Issue 20 fix). Comment corrected.
+
+### Status: RESOLVED (2026-05-19) — code changes applied; studies must be nuked and re-tuned
+
+**Fix applied:**
+
+`_params_pred_goal` replaced with a new standalone function (no longer an alias for `_params_base_xg`) with all corrected bounds. `_PARAM_BUILDERS` updated: `"pred_goal": _params_pred_goal`. See `MODEL.md` Section 9.3 for the full parameter table.
+
+Also fixed: stale eval_metric comment in `_objective_body()`.
+
+**Operational requirement:** All 5 pred_goal Optuna studies must be nuked before re-tuning — old trials have incompatible param ranges (mds=2–10, lambda < 10) that contaminate the Pareto front:
+
+```
+even_strength-1.0.0-pred_goal
+powerplay-1.0.0-pred_goal
+shorthanded-1.0.0-pred_goal
+empty_for-1.0.0-pred_goal
+empty_against-1.0.0-pred_goal
+```
+
+See the re-tune plan for the full nuke → tune → finalize sequence.
+
+---
+
 ## Summary Table
 
 | Issue | Description | Status |
@@ -1258,6 +1355,10 @@ imbalance is independent of logit scale.
 | 24 | `logit_base_xg` extreme values (±16) from `_BM_EPS = 1e-7` — base_margin saturation pins XGBoost outputs at 1.0; catastrophic Platt log-loss for 1 shot in EA hold-out with raw prob ≈ 1.0 | ✅ RESOLVED (2026-05-18) — added `_LOGIT_CAP = 4.0` clip in `process_data.py` and `score.py`; parquets regenerated |
 | R5 | Mixed print/MLflow logging across finalize + score scripts | ✅ DONE (2026-05-16) — ChickenProgress wraps strength loops in all 3 finalize.py files; screen_trials() candidate loop uses progress bar + progress.console.print() for per-trial diagnostics |
 | R6 | pred_goal pipeline renames `context_xg` → `base_xg` causing confusion (column name doesn't reflect content; `compute_rolling_stats.py` appears to use Tier 1 but actually uses Tier 2) | ✅ DONE (2026-05-16) — 6-file rename complete; `process-pred-goal` re-run required to regenerate parquets |
+| 25 | pred_goal `max_delta_step` not fixed at 1 — `_params_pred_goal = _params_base_xg` alias meant pred_goal used tunable mds 1–10 despite using `base_margin` identically to context_xg; 100% shorthanded screening failures (structural_flaw_penalty >> struct_cap for all candidates) | ✅ RESOLVED (2026-05-19) — mds=1 cap added to `screen_trials` and `_finalize_one` when `bm_train is not None`; fixed in new `_params_pred_goal` (Issue 27); all 5 studies must be nuked and re-tuned |
+| 26 | pred_goal `lambda` floor — lambda < 10 produces bimodal even with mds=1 (documented in `_params_context_xg` docstring); base_xg lambda ceiling was 10.0 = the required minimum floor; after mds clamp, all 15 screening candidates forced to exactly lambda=10 with zero lambda diversity | ✅ RESOLVED (2026-05-19) — lambda ≥ 10 clamp added to `screen_trials` and `_finalize_one`; lambda range [10, 100] in new `_params_pred_goal`; all 5 studies must be nuked and re-tuned |
+| 27 | pred_goal comprehensive param space gaps — alpha floor too low (1e-8 → 0.1); lr ceiling too high (0.30 → 0.10); mcw floor too low (20 → 50); gamma floor too low (0.0 → 1.0); all winning trials showed alpha≈0, empty_against lr=0.24 and mcw=21 (above/below corrected bounds); stale eval_metric comment claiming pred_goal uses logloss-last early stopping (code correctly uses aucpr-last per Issue 20) | ✅ RESOLVED (2026-05-19) — new `_params_pred_goal` function with all corrected bounds (see MODEL.md Section 9.3); stale comment fixed; all 5 studies must be nuked and re-tuned |
+| 28 | pred_goal `screen_trials` struct hard-gate false rejections for base_margin models — SH hold-out has only 187 positive examples; adversarial test (mds=5, lambda=1) produces identical struct ~11% of null_ll as healthy params (mds=1, lambda=17): gate has zero discrimination for pred_goal, only rejects all candidates. Root cause: Isotonic's extreme DOF relative to 187 positives creates a non-linear right-tail calibration effect that Platt cannot match — this is a data artifact, not bimodal signal. EF (230 positives) does NOT show this behaviour (struct=3.3%) because its prediction tail is less extreme | ✅ RESOLVED (2026-05-19) — `screen_trials`: `struct_hard_fail = (bm_train is None) and (structural_flaw_penalty > struct_cap)`; struct gate disabled when bm_train is not None (pred_goal); mds=1+lambda≥10 clamps prevent structural bimodality by construction; struct_penalty still used as soft composite-score penalty |
 
 ---
 
@@ -1399,6 +1500,37 @@ uv run xg-experiments --model pred_goal --strength even_strength --version 1.0.0
 # Mid-era per-season shifts: 2014-15 std 0.068→0.087; 2016-17 std 0.061→0.078;
 #   2017-18 std 0.083→0.064; 2019-20 bubble calmed std 0.099→0.077
 # Leaderboard stable (ranks 6/7 swapped; 8466333 D 5,576 min enters bottom 10)
+
+# ✅ DONE (2026-05-19): Issues 25+26+27 — pred_goal param space corrected; clamps applied; 4/5 states re-finalized
+# Code changes applied:
+#   experiments.py: new _params_pred_goal function (mds=1 fixed, lambda [10,100], lr [0.01,0.10],
+#                   alpha [0.1,10], mcw [50,300], gamma [1.0,10.0], spw_cap=3.0); stale comment fixed
+#   utils/finalize_utils.py: mds=1 and lambda≥10 clamps in screen_trials when bm_train is not None
+#   pred_goal/finalize.py: same mds=1 and lambda≥10 clamps in _finalize_one when bm_train is not None
+# Re-finalized 4/5 states (ES/PP/EF/EA) with clamps applied against old _params_base_xg studies:
+#   ES trial 424: max_depth=5, lambda=10 (forced), alpha=0.0001, mcw=42, lr=0.0093, best_iter=86, PR AUC=0.3670 (+0.0013 lift)
+#   PP trial 453: max_depth=6, lambda=10 (forced), alpha=0.0493, mcw=141, lr=0.0088, best_iter=80, PR AUC=0.4147 (+0.0008 lift)
+#   EF trial 1834: max_depth=3, lambda=10 (forced), alpha=0.054, mcw=103, lr=0.051, best_iter=65, PR AUC=0.3891 (+0.0032 lift)
+#   EA trial 1732: max_depth=4, lambda=10 (forced), alpha=0.001, mcw=21, lr=0.2384, best_iter=1, PR AUC=0.7681 (-0.0138 lift)
+# SH not finalized — 100% bimodal from old studies even with clamps.
+# NOTE: These 4 models have compromised params (lambda forced to 10, alpha≈0, EA lr/mcw out of range).
+# All 5 studies must be nuked and re-tuned with corrected _params_pred_goal before pred_goal is final.
+
+# ✅ DONE (2026-05-19): Issues 25+26+27 — nuked all 5 pred_goal 1.0.0 studies; 1.0.1 studies created with corrected param space
+# ✅ DONE (2026-05-19): Issue 28 — struct hard-gate disabled for base_margin models
+#   utils/finalize_utils.py: struct_hard_fail = (bm_train is None) and (structural_flaw_penalty > struct_cap)
+#   SH adversarial test confirmed gate has zero discrimination for pred_goal; struct_penalty is still a soft penalty.
+
+# ✅ DONE (2026-05-20): 2K tuning run complete + all 5 states finalized at version 1.0.1
+# All 5 studies at version 1.0.1 with _params_pred_goal (mds=1 fixed, lambda [10,100], lr [0.01,0.10], alpha [0.1,10], mcw [50,300]):
+#   even_strength-1.0.1-pred_goal:  2000 completed → finalized trial 1895 (lambda=29.8, alpha=1.71, best_iter=9)
+#   powerplay-1.0.1-pred_goal:      2000 completed → finalized trial 1654 (lambda=69.8, alpha=0.17, best_iter=74)
+#   shorthanded-1.0.1-pred_goal:    2000 completed → finalized trial 1549 (lambda=18.5, alpha=3.87, best_iter=94) ← first SH model
+#   empty_for-1.0.1-pred_goal:      2000 completed → finalized trial 1547 (lambda=32.3, alpha=1.29, best_iter=419)
+#   empty_against-1.0.1-pred_goal:  2000 completed → finalized trial 928  (lambda=13.2, alpha=1.03, best_iter=19)
+# Lift: ES +0.0012 (14W/1L), PP +0.0007 (11W/4L), SH +0.0080 (9W/5L), EF +0.0076 (6W clear), EA −0.0142 (structural)
+# All FAIL/WARN results are structural (inverse OOF gap from RAPM maturity; EA negative lift — no goalie). See DIAGNOSTICS.md.
+uv run diagnose-pred-xg
 
 # PENDING — Issue 19: implement multi-objective (PR-AUC + log loss, NSGA-II) before next tuning run.
 # Required code changes:

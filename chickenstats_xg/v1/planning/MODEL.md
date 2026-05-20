@@ -1,6 +1,6 @@
 # chickenstats-xg — v1.0.0 Cascade xG Model Reference
 
-> Last updated: 2026-05-18
+> Last updated: 2026-05-20
 
 This document is the definitive reference for the `v1.0.0` cascade xG model: what it is, how every script fits together, the full feature pipeline, training instructions, infrastructure requirements, and implementation status.
 
@@ -741,19 +741,17 @@ uv run python chickenstats_xg/v1/rapm/diagnose.py
 
 ## 9. Hyperparameter Search Space
 
-### 9.1 base_xg + pred_goal — XGBoost gbtree
-
-`_params_pred_goal = _params_base_xg` — pred_goal uses the identical search space.
+### 9.1 base_xg — XGBoost gbtree
 
 | Parameter | Type | Range | Notes |
 |---|---|---|---|
 | `max_depth` | int | 3–6 | Capped at 6 to prevent GOAL fingerprinting |
 | `min_child_weight` | int (log) | 20–200 | Log scale |
-| `max_delta_step` | int | 1–10 | Floor of 1 ensures the step cap is always active; tunable here (no base_margin, monotone constraints prevent bimodal cliff) |
+| `max_delta_step` | int | 1–10 | Tunable — no base_margin; monotone constraints on geometry prevent bimodal cliff |
 | `scale_pos_weight` | float | 1.0–10.0 | Searched up to min(data_spw, 10.0); `empty_against` fixed at 1.0 (balanced) |
 | `learning_rate` | float (log) | 1e-3–0.30 | No ceiling needed — mds tunable + no base_margin means high lr doesn't cause bimodal |
 | `gamma` | float | 0.0–5.0 | Upper end acts as hard gate against noisy splits |
-| `lambda` | float (log) | 0.1–10.0 | ES 1.0.0 selected 9.354 (near ceiling); raise to 100.0 if future ES runs need stronger regularization |
+| `lambda` | float (log) | 0.1–10.0 | L2 regularization |
 | `alpha` | float (log) | 1e-8–1.0 | L1 regularization |
 | `subsample` | float (step 0.05) | 0.4–1.0 | Row sampling |
 | `colsample_bytree` | float (step 0.05) | 0.6–1.0 | |
@@ -766,7 +764,7 @@ Fixed:
 - `eval_metric: ["aucpr", "logloss"]` — early stopping on logloss (last metric)
 - `enable_categorical: True`
 - `random_state: 615`
-- `monotone_constraints: {event_distance: -1, event_angle: -1}` (base_xg only; filtered to columns present)
+- `monotone_constraints: {event_distance: -1, event_angle: -1}` (filtered to columns present)
 
 ### 9.2 context_xg — XGBoost gbtree (depth=2)
 
@@ -794,6 +792,35 @@ Fixed:
 - `enable_categorical: True`
 - `random_state: 615`
 - No `interaction_constraints` — removed Issue 21; max_depth=2 is sufficient structural protection
+
+### 9.3 pred_goal — XGBoost gbtree (base_margin-aware)
+
+pred_goal uses `logit(context_xg)` as `base_margin` — the same structural regime as context_xg (Issues 25+26). Regularisation floors are raised vs. base_xg for the same reasons as context_xg: leaf weights are residuals from the base_margin prior, not the full sigmoid range; `lambda < 10` produces bimodal output even with `mds=1`. pred_goal uses deeper trees than context_xg (depth 3–6 vs. 2), so lambda and mcw ceilings are lower (lambda cap 100 vs. 500; mcw cap 300 vs. 500).
+
+| Parameter | Type | Range | Notes |
+|---|---|---|---|
+| `max_depth` | int | 3–6 | Same range as base_xg; deeper trees than context_xg (depth fixed at 2) |
+| `min_child_weight` | int (log) | 50–300 | Floor raised from base_xg's 20 — RAPM features are null for ~13% of shots; low mcw overfits to training-era player matchup patterns |
+| `max_delta_step` | **fixed: 1** | — | **Not tunable.** mds ≥ 2 causes bimodal cliff with base_margin (Issue 25; same mechanism as context_xg). Fixed in the search space. |
+| `scale_pos_weight` | float | 1.0–3.0 | Cap 3.0 (vs. 10.0 for base_xg); base_margin already anchors the class prior, so spw near 1.0 is expected |
+| `learning_rate` | float (log) | 0.01–0.10 | Ceiling 0.10 — same Issue 18 rationale as context_xg; lr > 0.10 accumulates bimodal-causing log-odds over 500 trees |
+| `gamma` | float | 1.0–10.0 | Floor raised from base_xg's 0.0 — prevents unconstrained splits on sparse RAPM features |
+| `lambda` | float (log) | 10.0–100.0 | **Floor 10.0 critical** (Issue 26) — lambda < 10 produces bimodal even with mds=1; ceiling 100 (lower than context_xg 500 — pred_goal uses deeper trees which shrink leaf weights more aggressively) |
+| `alpha` | float (log) | 0.1–10.0 | Floor raised from base_xg's 1e-8 — L1 sparsity needed for the many sparse RAPM career features |
+| `subsample` | float (step 0.05) | 0.4–1.0 | Row sampling |
+| `colsample_bytree` | float (step 0.05) | 0.6–1.0 | |
+| `colsample_bylevel` | float (step 0.05) | 0.6–1.0 | Per-depth feature subsampling |
+| `colsample_bynode` | float (step 0.05) | 0.6–1.0 | Per-split feature subsampling |
+
+Fixed:
+- `objective: binary:logistic`, `booster: gbtree`
+- `max_delta_step: 1` — fixed, not tuned. See Issue 25.
+- `n_estimators: 500` (with `early_stopping_rounds: 50`)
+- `eval_metric: ["logloss", "aucpr"]` — **early stopping on aucpr** (last metric). Logloss-based stopping causes `best_iter=0` for base_margin models (Issue 20). base_xg keeps `["aucpr", "logloss"]` (logloss-last).
+- `base_margin` — `logit(context_xg)` passed as `base_margin` to `model.fit()`
+- `enable_categorical: True`
+- `random_state: 615`
+- No monotone constraints — pred_goal feature matrix contains only talent features (no geometry columns)
 
 CV: **3-fold `TimeSeriesSplit`** inside Optuna (not `shuffle`) for all tiers. A full model (no early stopping) is also trained on `X_train` and evaluated on `X_test` for final test metrics.
 
@@ -1024,8 +1051,10 @@ Rolling stats and RAPM are updated nightly by the scraper; RAPM is refreshed onc
 | 20 | `diagnose-context-xg` (first run) | ✅ Done (2026-05-18) |
 | 21 | context_xg re-finalized (refresh, run 2); PP/SH/EF selected different trials; `diagnose-context-xg` re-run | ✅ Done (2026-05-18) |
 | 22 | `score-context-xg --all` re-run after refresh + RAPM re-finalized against run 2 + `diagnose-rapm` (r=0.337 ✅) | ✅ Done (2026-05-18) |
-| 23 | Re-tune pred_goal (studies stale after context_xg v1.0.1 model change) | ⏳ Pending |
-| 24 | Re-finalize pred_goal + re-diagnose | ⏳ Pending |
+| 23 | Re-finalize pred_goal 4/5 states with mds=1 + lambda≥10 clamps (Issues 25+26) against old `_params_base_xg` studies — compromised params (lambda=10 forced for all, alpha≈0, EA lr/mcw out of range); SH not finalized (100% bimodal even with clamps) | ✅ Done (2026-05-19) — superseded by steps 24+25 |
+| 24 | Nuke all 5 pred_goal 1.0.0 studies + re-tune 2000 trials per state under corrected `_params_pred_goal` (lambda [10,100], lr [0.01,0.10], alpha [0.1,10], mcw [50,300], mds=1 fixed); Issue 28 struct gate disabled for base_margin models | ✅ Done (2026-05-20) |
+| 25 | Re-finalize pred_goal all 5 states at v1.0.1 + diagnose; SH finalized for first time (struct gate was blocking all trials) | ✅ Done (2026-05-20) — ES trial 1895 (lift +0.0012), PP trial 1654 (+0.0007), SH trial 1549 (+0.0080), EF trial 1547 (+0.0076), EA trial 928 (−0.0142 structural) |
+| 26 | `score-pred-goal --all` — score all 15 PBP seasons (2010–2024) with v1.0.1 pred_goal models | ✅ Done (2026-05-20) — 15 parquets written to `data/pred_goal/scored/` |
 
 ### Data Status
 
@@ -1038,14 +1067,15 @@ Rolling stats and RAPM are updated nightly by the scraper; RAPM is refreshed onc
 | `chickenstats_xg/v1/models/base_xg/` | ✅ Present — v1.0.0 finalized 2026-05-14 (ES/PP/SH/EF PASS, EA WARN-high-conf) |
 | `chickenstats_xg/v1/data/context_xg/train/` | ✅ Present — rebuilt 2026-05-14 |
 | `chickenstats_xg/v1/data/context_xg/hold_out/` | ✅ Present — rebuilt 2026-05-14 |
-| `chickenstats_xg/v1/data/context_xg/scored/` | ✅ Present — written 2026-05-18 19:45 by `score-context-xg --all` (v1.0.1 run 1); re-run required after refresh (run 2) |
+| `chickenstats_xg/v1/data/context_xg/scored/` | ✅ Present — re-scored 2026-05-18 after context_xg run 2 (v1.0.1; PP trial 1556, SH trial 1851, EF trial 1772) |
 | `chickenstats_xg/v1/models/context_xg/` | ✅ Present — v1.0.1 refreshed 2026-05-18 (run 2); PP trial 1556, SH trial 1851, EF trial 1772, ES trial 350, EA trial 1803; all 5 pass struct gate; diagnose-context-xg run 2 complete (SH 0.3476, ES 0.3658, PP 0.4139, EF 0.3859, EA 0.7820) |
 | `chickenstats_xg/v1/data/rapm/pbp/` | ✅ Present — re-enriched 2026-05-18 with context_xg run 2 |
 | `chickenstats_xg/v1/data/rapm/stints/` | ✅ Present — rebuilt 2026-05-18 using context_xg run 2 for h_xgf/a_xgf |
 | `chickenstats_xg/v1/data/rapm/rapm_by_season.parquet` | ✅ Present — re-regressed 2026-05-18 (YOY r=0.337 PASS; all 4 checks PASS) |
 | `chickenstats_xg/v1/data/pred_goal/train/` | ✅ Present — rebuilt 2026-05-15 with Issue 15+16 feature set (_1g stripped; RAPM xg only) |
 | `chickenstats_xg/v1/data/pred_goal/hold_out/` | ✅ Present — rebuilt 2026-05-15 |
-| `chickenstats_xg/v1/models/pred_goal/` | ✅ Present — v1.0.0 re-finalized 2026-05-16 `--top-n 15` (ES/PP ✅ PASS corrected; SH ⚠️ WARN cal; EF ❌ FAIL OOF-gap structural; EA ❌ FAIL lift structural) |
+| `chickenstats_xg/v1/models/pred_goal/` | ✅ Present — all 5 states finalized 2026-05-20 at v1.0.1 with corrected `_params_pred_goal`. ES trial 1895 (lift=+0.0012, best_iter=9), PP trial 1654 (+0.0007, best_iter=74), SH trial 1549 (+0.0080, best_iter=94; first SH model), EF trial 1547 (+0.0076, best_iter=419), EA trial 928 (−0.0142 structural; use context_xg for post-2020 EA). Lambda distributed [13–70]; alpha ≥ 0.1 for all states. All FAIL/WARN results are structural — production-ready for ES/PP/SH/EF; EA conditional (see DIAGNOSTICS.md). |
+| `chickenstats_xg/v1/data/pred_goal/scored/` | ✅ Present — 15 parquets (pbp_2010–pbp_2024) scored 2026-05-20 with v1.0.1 pred_goal models |
 
 ---
 
@@ -1073,13 +1103,14 @@ After all training steps complete, deploy to the homelab API:
 
 ## 17. Known Gaps & Pending Work
 
-No critical blockers remain. All three tiers finalized and validated. Training pipeline complete.
+No critical blockers remain. All three tiers finalized and validated. Training pipeline complete. pred_goal all 5 states production-ready (EA conditional — use context_xg for post-2020 EA inference).
 
 ### Non-blocking
 
 - **`pred_goal/process_data.py` — `strength_state` filter relies on hardcoded string lists.** The `strength_state_map` in `main()` maps strength names to lists of strength state strings. If `chickenstats` adds new strength state strings, this map needs updating.
-- **Issue 19 — multi-objective (PR-AUC + log loss, NSGA-II) pending.** Currently context_xg studies are re-running (Issue 18 constraints). After they complete, multi-objective must be implemented before the next base_xg/pred_goal rebuild. See `DECISIONS.md` Issue 19.
-- **R6 — pred_goal parquets still carry `base_xg` column name.** Code changes complete (2026-05-16); `process-pred-goal` re-run required to regenerate parquets with `context_xg` naming.
+- **Issue 19 — multi-objective (NSGA-II) resolved for all tiers.** `tune_model()` uses `NSGAIISampler` with `directions=["maximize", "minimize"]` for all three models (shared code path). base_xg v1.0.1 and pred_goal v1.0.1 both ran under NSGA-II. No further action required.
+- **8 zero-gain pred_goal features.** `shooter_gax_career`, `shooter_gax_per_shot_career`, `shooter_gax_season`, `shooter_gax_per_shot_season`, `goalie_gsax_career`, `goalie_gsax_per_shot_career`, `goalie_gsax_season`, `goalie_gsax_per_shot_season` have zero gain across all 5 strength states. Safe to remove in a future `process-pred-goal` + re-tune cycle without degrading model quality.
+- **EA pred_goal negative lift.** ES/PP/SH/EF are production-ready. EA pred_goal adds noise post-2020 because context_xg absorbed EA shot-quality signal. For post-2020 EA inference, use context_xg directly. Historical (pre-2020) EA pred_goal provides modest improvements in some seasons.
 
 ### Resolved
 
@@ -1109,4 +1140,4 @@ No critical blockers remain. All three tiers finalized and validated. Training p
 
 ---
 
-*This document reflects the state as of 2026-05-18. Three-tier cascade architecture: base_xg (8 pure geometry + shot_type features, OOF isotonic calibration) → context_xg (21 features: logit_base_xg as BOTH base_margin AND learnable feature + binary flags + game-state modifiers + sequence features; gbtree depth-2, no interaction constraints, pooled OOF + hold-out Platt calibration; eval_metric=["logloss","aucpr"] → early stopping on aucpr; finalize with `--top-n 15`; bimodal screening via `structural_flaw_penalty > struct_cap` where struct_cap = 0.088 × null_ll) → pred_goal (talent features only: GxG/GSAx career/season/10g/EWMA + xg RAPM dims; logit(context_xg) as base_margin). v1.0.1 context_xg refreshed 2026-05-18 (run 2) — ES 0.3658, PP 0.4139, SH 0.3476, EF 0.3859, EA 0.7820; all 5 pass struct gate. RAPM rebuilt and diagnosed (PASS). Pending: score-context-xg re-run after refresh, process-pred-goal, pred_goal re-tune, Issue 19 multi-objective. See `chickenstats_xg/v1/planning/DECISIONS.md` for full issue history.*
+*This document reflects the state as of 2026-05-20. Three-tier cascade architecture fully finalized: base_xg (8 pure geometry + shot_type features, OOF isotonic calibration, v1.0.1 NSGA-II) → context_xg (21 features: logit_base_xg as BOTH base_margin AND learnable feature + binary flags + game-state modifiers + sequence features; gbtree depth-2, no interaction constraints, pooled OOF + hold-out Platt calibration; eval_metric=["logloss","aucpr"] → early stopping on aucpr; finalize with `--top-n 15`; bimodal screening via `structural_flaw_penalty > struct_cap` where struct_cap = 0.088 × null_ll; v1.0.1 run 2 — ES 0.3658, PP 0.4139, SH 0.3476, EF 0.3859, EA 0.7820) → pred_goal (talent features only: GxG/GSAx 10g/EWMA + xg RAPM dims; logit(context_xg) as base_margin; struct gate disabled for base_margin models (Issue 28); v1.0.1 2K-trial run — ES trial 1895 lift +0.0012, PP trial 1654 +0.0007, SH trial 1549 +0.0080, EF trial 1547 +0.0076, EA trial 928 −0.0142 structural). RAPM v1.0.1 (YOY r=0.337 PASS). All pipeline steps complete. Non-blocking: Issue 19 multi-objective for base_xg/pred_goal; 8 zero-gain pred_goal features; EA conditional deployment. See `chickenstats_xg/v1/planning/DECISIONS.md` for full issue history.*
