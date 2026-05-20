@@ -1,0 +1,23 @@
+{
+  "objective": "binary:logistic",
+  "random_state": 615,
+  "n_estimators": 500,
+  "early_stopping_rounds": 50,
+  "eval_metric": [
+    "logloss",
+    "aucpr"
+  ],
+  "monotone_constraints": [],
+  "scale_pos_weight": 1.5372576501024222,
+  "max_depth": 6,
+  "min_child_weight": 51,
+  "learning_rate": 0.06598637676633538,
+  "gamma": 8.888422659842108,
+  "lambda": 29.826297481827435,
+  "alpha": 1.7113825967757288,
+  "subsample": 1.0,
+  "colsample_bytree": 0.95,
+  "colsample_bylevel": 0.85,
+  "colsample_bynode": 0.9,
+  "max_delta_step": 1
+}

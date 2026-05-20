@@ -1,0 +1,14 @@
+{
+  "strength": "shorthanded",
+  "tier": "pred_goal",
+  "version": "1.0.1",
+  "optuna_study_name": "shorthanded-1.0.1-pred_goal",
+  "optuna_trial_number": 1549,
+  "optuna_trial_values": [
+    0.256608,
+    0.224096
+  ],
+  "mlflow_tuning_run_id": "4cb39d06dea74a5198e5def3470a81d7",
+  "git_commit": "59d2738",
+  "finalized_at": "2026-05-20T15:38:07.168625+00:00"
+}

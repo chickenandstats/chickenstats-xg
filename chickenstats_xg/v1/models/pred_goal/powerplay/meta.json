@@ -1,0 +1,14 @@
+{
+  "strength": "powerplay",
+  "tier": "pred_goal",
+  "version": "1.0.1",
+  "optuna_study_name": "powerplay-1.0.1-pred_goal",
+  "optuna_trial_number": 1654,
+  "optuna_trial_values": [
+    0.218046,
+    0.300138
+  ],
+  "mlflow_tuning_run_id": "ef45fb12e43d4eddaefd16b05c50db5c",
+  "git_commit": "59d2738",
+  "finalized_at": "2026-05-20T15:36:47.732514+00:00"
+}

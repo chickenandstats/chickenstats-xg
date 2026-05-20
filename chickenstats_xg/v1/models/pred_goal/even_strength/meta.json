@@ -1,0 +1,14 @@
+{
+  "strength": "even_strength",
+  "tier": "pred_goal",
+  "version": "1.0.1",
+  "optuna_study_name": "even_strength-1.0.1-pred_goal",
+  "optuna_trial_number": 1895,
+  "optuna_trial_values": [
+    0.196969,
+    0.209204
+  ],
+  "mlflow_tuning_run_id": "c7911e163a684690add7203731446573",
+  "git_commit": "59d2738",
+  "finalized_at": "2026-05-20T15:32:46.219431+00:00"
+}
