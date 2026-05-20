@@ -38,7 +38,7 @@ finalize-pred-goal    = "chickenstats_xg.v1.pred_goal.finalize:main"
 # score
 score-base-xg       = "chickenstats_xg.v1.base_xg.score:main"
 score-context-xg    = "chickenstats_xg.v1.context_xg.score:main"
-score-pred-xg       = "chickenstats_xg.v1.pred_goal.score:main"
+score-pred-goal       = "chickenstats_xg.v1.pred_goal.score:main"
 # process data
 process-base-xg     = "chickenstats_xg.v1.base_xg.process_data:main"
 process-context-xg  = "chickenstats_xg.v1.context_xg.process_data:main"
@@ -49,7 +49,7 @@ pipeline-context-xg = "chickenstats_xg.v1.context_xg.run_pipeline:main"
 # diagnostics
 diagnose-base-xg    = "chickenstats_xg.v1.base_xg.diagnose:main"
 diagnose-context-xg = "chickenstats_xg.v1.context_xg.diagnose:main"
-diagnose-pred-xg    = "chickenstats_xg.v1.pred_goal.diagnose:main"
+diagnose-pred-goal = "chickenstats_xg.v1.pred_goal.diagnose:main"
 diagnose-rapm    = "chickenstats_xg.v1.rapm.diagnose:main"
 # rapm
 prep-pbp-rapm         = "chickenstats_xg.v1.rapm.prep_pbp:main"
