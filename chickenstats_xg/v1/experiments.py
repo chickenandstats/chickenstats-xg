@@ -319,9 +319,38 @@ def _params_context_xg(trial: optuna.Trial, spw: float, X_train: pd.DataFrame) -
     }
 
 
-# pred_goal uses the same param space as base_xg — talent features have the same
-# relaxed regularisation budget (no fingerprint risk, no monotone constraints needed).
-_params_pred_goal = _params_base_xg
+def _params_pred_goal(trial: optuna.Trial, spw: float, X_train: pd.DataFrame) -> dict[str, Any]:
+    """Optuna param space for pred_goal.
+
+    pred_goal uses logit(context_xg) as XGBoost base_margin — same base_margin regime
+    as context_xg (logit_base_xg). Regularisation floors are raised vs base_xg for the
+    same reasons documented in _params_context_xg: leaf weights are residuals from the
+    base_margin prior, not the full sigmoid range; small-sample states need lambda >> 1.
+    pred_goal uses deeper trees than context_xg (depth 3–6 vs 2), so ceilings are lower
+    than context_xg's (lambda cap 100 vs 500; mcw cap 300 vs 500).
+    """
+    return {
+        "objective": "binary:logistic",
+        "verbosity": 0,
+        "random_state": SEED,
+        "n_estimators": N_ESTIMATORS,
+        "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
+        "enable_categorical": True,
+        "monotone_constraints": {col: d for col, d in MONOTONE_CONSTRAINTS.items() if col in X_train.columns},
+        "max_depth": trial.suggest_int("max_depth", 3, 6),
+        "min_child_weight": trial.suggest_int("min_child_weight", 50, 300, log=True),
+        "max_delta_step": 1,
+        "scale_pos_weight": spw,
+        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.10, log=True),
+        "gamma": trial.suggest_float("gamma", 1.0, 10.0),
+        "lambda": trial.suggest_float("lambda", 10.0, 100.0, log=True),
+        "alpha": trial.suggest_float("alpha", 0.1, 10.0, log=True),
+        "subsample": trial.suggest_float("subsample", 0.4, 1.0, step=0.05),
+        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0, step=0.05),
+        "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.6, 1.0, step=0.05),
+        "colsample_bynode": trial.suggest_float("colsample_bynode", 0.6, 1.0, step=0.05),
+    }
+
 
 _PARAM_BUILDERS: dict[str, Any] = {
     "base_xg": _params_base_xg,
@@ -460,8 +489,10 @@ def _objective_body(trial: optuna.Trial, data: ExperimentData, current_run: Any)
     #   stopping to always select best_iter=0 (one tree, no contextual learning).
     #   Bimodal collapse from aucpr-only stopping was documented before max_delta_step=1
     #   was added; with that structural cap in place it no longer triggers.
-    # base_xg / pred_goal: logloss last → logloss drives early stopping (no base_margin
-    #   overshoot issue; bimodal collapse was only observed in context_xg).
+    # base_xg: logloss last → logloss drives early stopping (no base_margin, no overshoot).
+    # pred_goal: aucpr last → same as context_xg. pred_goal uses logit(context_xg) as
+    #   base_margin; logloss briefly increases in early rounds for the same overshoot reason,
+    #   causing logloss-based stopping to always select best_iter=0.
     if data.model in ("context_xg", "pred_goal"):
         eval_metric = ["logloss", "aucpr"]
     else:

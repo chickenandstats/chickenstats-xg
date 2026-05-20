@@ -54,6 +54,10 @@ _GOAL_FP_RAMP_START = 0.02
 # Isotonic's extra DOF produce a larger absolute gap on its 1,002-event holdout vs
 # even_strength's 97,552 — even though the relative gap is the same ~3-4%.
 # 8.8% = 2.8× headroom over even_strength's observed healthy ratio of 3.1%.
+#
+# NOTE: For base_margin models (pred_goal), the struct hard gate is DISABLED —
+# see screen_trials() comment for rationale. This constant only applies when
+# bm_train is None (base_xg and context_xg).
 _STRUCT_PENALTY_REL_CAP = 0.088
 
 
@@ -147,11 +151,15 @@ def screen_trials(
     fix bimodal raw probabilities; IsotonicRegression (monotone step function) can. A large gap
     means the raw distribution is structurally flawed, not merely shifted.
 
-    Hard rejection (any one triggers): cal_ll > 2× null_ll (severe miscalibration);
-    structural_flaw_penalty > struct_cap (Isotonic >> Platt gap — bimodal). goal_fp and
-    dist_ratio are diagnostics only; in context_xg with 21 features, extreme-danger shots
-    legitimately reach 85%+ in-sample calibrated probability. struct_cap is relative to
-    null_ll so it scales across strength states with different base rates and holdout sizes.
+    Hard rejection triggers: cal_ll > 2× null_ll (catastrophic miscalibration) always;
+    structural_flaw_penalty > struct_cap only when bm_train is None (base_xg / context_xg).
+    For pred_goal (bm_train is not None), the struct hard gate is disabled: mds=1 + lambda≥10
+    clamps prevent structural bimodality by construction, and adversarial testing (SH holdout,
+    187 positives) showed bimodal params (mds=5, lambda=1) produce the same struct ~11% of
+    null_ll as healthy params — the gate cannot discriminate, it only causes false rejections.
+    struct_penalty is still used as a soft composite-score penalty regardless.
+    goal_fp and dist_ratio are diagnostics only. struct_cap is relative to null_ll so it
+    scales across strength states with different base rates and holdout sizes.
     If all candidates fail, RuntimeError is raised — no silent fallback to least-bad model.
     """
     y_np = y_hold_out.to_numpy()
@@ -176,6 +184,9 @@ def screen_trials(
             screen_params = {**fixed_params, **trial_params}
             if max_depth_cap is not None:
                 screen_params["max_depth"] = min(screen_params.get("max_depth", max_depth_cap), max_depth_cap)
+            if bm_train is not None:
+                screen_params["max_delta_step"] = 1  # mds>=2 causes bimodal cliff with base_margin
+                screen_params["lambda"] = max(screen_params.get("lambda", 10.0), 10.0)  # lambda<10 bimodal even with mds=1
             model = xgb.XGBClassifier(**screen_params)
             model.fit(
                 X_train,
@@ -231,16 +242,23 @@ def screen_trials(
                 goal_fraction_high = 0.0
                 is_goal_fingerprinting = False
 
-            # Hard bimodal rejection: Platt cal_ll > 2× null (catastrophic miscalibration) OR
-            # structural_flaw_penalty > struct_cap (Isotonic >> Platt gap — bimodal signal).
-            # struct_cap = _STRUCT_PENALTY_REL_CAP × null_ll (scales with base rate/holdout size).
-            is_bimodal = cal_ll > bimodal_threshold or structural_flaw_penalty > struct_cap
+            # Hard bimodal rejection: Platt cal_ll > 2× null (catastrophic miscalibration).
+            # struct gate (Isotonic >> Platt gap) only applies to non-base-margin models
+            # (base_xg, context_xg). For pred_goal (bm_train is not None):
+            #   1. mds=1 + lambda≥10 clamps prevent structural bimodality by construction.
+            #   2. SH (187 hold-out positives) adversarial test: mds=5/lambda=1 produces the
+            #      same struct ~11% of null_ll as healthy params — gate has zero discrimination.
+            #      Root cause: extreme right-tail predictions in SH's small holdout create a
+            #      Platt-Iso gap that is a data artifact, not a bimodal signal.
+            # struct_penalty is still used in the composite soft-penalty score.
+            struct_hard_fail = (bm_train is None) and (structural_flaw_penalty > struct_cap)
+            is_bimodal = cal_ll > bimodal_threshold or struct_hard_fail
             if is_bimodal:
                 n_bimodal += 1
             reject_reason = ""
             if cal_ll > bimodal_threshold:
                 reject_reason = "cal_ll"
-            elif structural_flaw_penalty > struct_cap:
+            elif struct_hard_fail:
                 reject_reason = "struct"
             progress.console.print(
                 f"    trial {trial_num:4d}: {'❌ ' + reject_reason + (' ' * (7 - len(reject_reason))) if is_bimodal else '✅ pass     '}"

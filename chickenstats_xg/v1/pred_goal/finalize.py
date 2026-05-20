@@ -159,6 +159,9 @@ def _finalize_one(
 
     params = {**fixed_params, **best_params}
     params["max_depth"] = min(params.get("max_depth", MAX_DEPTH_CAP), MAX_DEPTH_CAP)
+    if bm_train is not None:
+        params["max_delta_step"] = 1  # mds>=2 causes bimodal cliff with base_margin
+        params["lambda"] = max(params.get("lambda", 10.0), 10.0)  # lambda<10 bimodal even with mds=1
 
     base_model = xgb.XGBClassifier(**params)
     base_model.fit(

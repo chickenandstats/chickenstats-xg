@@ -1,4 +1,4 @@
-"""Score raw PBP with the finalized pred_goal model (context_xg cascade).
+"""Score rapm PBP with the finalized pred_goal model (context_xg cascade).
 
 Training shots use the OOF predictions saved by finalize.py to avoid the
 in-sample bias of scoring a model on its own training data. Hold-out shots
@@ -32,8 +32,8 @@ from chickenstats_xg.v1.utils.transforms import apply_fixed_categoricals, logit
 
 NON_FEATURE_COLS = ["goal", "season"] + PASSTHROUGH_COLS
 
-# Columns in raw PBP replaced by fresh model scores.
-_STALE_XG_COLS = {"base_xg", "context_xg", "pred_goal", "pred_goal_adj"}
+# Columns in rapm PBP replaced by fresh model scores (base_xg passes through unchanged).
+_STALE_XG_COLS = {"context_xg", "pred_goal", "pred_goal_adj"}
 
 
 def _split_df(df: pd.DataFrame, strength: str) -> tuple[pd.DataFrame, pd.Series, np.ndarray | None]:
@@ -146,7 +146,7 @@ def main() -> None:
     args = parser.parse_args()
 
     base_dir = Path(__file__).parent.parent
-    raw_dir = base_dir.parent.parent / "raw_data" / "pbp"
+    raw_dir = base_dir / "data" / "rapm" / "pbp"
     pred_goal_dir = base_dir / "data" / "pred_goal"
     models_dir = base_dir / "models" / "pred_goal"
     scored_dir = pred_goal_dir / "scored"
