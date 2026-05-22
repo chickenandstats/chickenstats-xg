@@ -388,7 +388,7 @@ def main() -> None:
     for s, statuses in all_statuses.items():
         if not statuses:
             continue
-        row = "  ".join(f"{status_icon(statuses.get(c, '—'))+'':>9}" for c in checks)
+        row = "  ".join(f"{status_icon(statuses.get(c, '—')) + '':>9}" for c in checks)
         print(f"  {s:<20}  {row}")
 
     # Advanced metrics summary table

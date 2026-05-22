@@ -232,7 +232,7 @@ def check_feature_gain(strength: str) -> str:
         print(f"  {feat:<35}  {gain / total_gain:>5.1%}  {note}")
 
     if context_feats:
-        names = ", ".join(f"{f}({g/total_gain:.1%})" for f, g in context_feats[:3])
+        names = ", ".join(f"{f}({g / total_gain:.1%})" for f, g in context_feats[:3])
         print(f"\n    Context features with nonzero gain: {names}")
     else:
         print(f"\n    No context leakage detected — all base_xg features have 0 gain.")
@@ -500,7 +500,7 @@ def main() -> None:
     for s, statuses in all_statuses.items():
         if not statuses:
             continue
-        row = "  ".join(f"{status_icon(statuses.get(c, '—'))+'':>9}" for c in checks)
+        row = "  ".join(f"{status_icon(statuses.get(c, '—')) + '':>9}" for c in checks)
         print(f"  {s:<20}  {row}")
 
     # Advanced metrics summary table

@@ -17,9 +17,7 @@ PRIOR_SHOTS = 100  # Bayesian prior: rookie with 5 shots gets pulled toward 0 by
 EWMA_HALF_LIFE = 50  # shots until a past observation retains 50% weight
 
 
-def _event_level_stats(
-    df: pl.DataFrame, id_col: str, metric_expr: pl.Expr, stat_col: str
-) -> pl.DataFrame:
+def _event_level_stats(df: pl.DataFrame, id_col: str, metric_expr: pl.Expr, stat_col: str) -> pl.DataFrame:
     """Career and season-YTD cumulative GxG or GSAx with shift(1) leakage guard."""
     df = df.with_columns(
         _g=metric_expr.cum_sum().shift(1).over(id_col),
@@ -59,9 +57,7 @@ def _ewma_stats(df: pl.DataFrame, id_col: str, metric_expr: pl.Expr, stat_col: s
     )
 
 
-def _game_level_stats(
-    df: pl.DataFrame, id_col: str, metric_expr: pl.Expr, stat_col: str
-) -> pl.DataFrame:
+def _game_level_stats(df: pl.DataFrame, id_col: str, metric_expr: pl.Expr, stat_col: str) -> pl.DataFrame:
     """Last-10g GxG or GSAx via game-level aggregate and rolling window."""
     game = (
         df.group_by([id_col, "season", "game_id"])

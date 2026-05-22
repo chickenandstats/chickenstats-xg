@@ -186,7 +186,9 @@ def screen_trials(
                 screen_params["max_depth"] = min(screen_params.get("max_depth", max_depth_cap), max_depth_cap)
             if bm_train is not None:
                 screen_params["max_delta_step"] = 1  # mds>=2 causes bimodal cliff with base_margin
-                screen_params["lambda"] = max(screen_params.get("lambda", 10.0), 10.0)  # lambda<10 bimodal even with mds=1
+                screen_params["lambda"] = max(
+                    screen_params.get("lambda", 10.0), 10.0
+                )  # lambda<10 bimodal even with mds=1
             model = xgb.XGBClassifier(**screen_params)
             model.fit(
                 X_train,

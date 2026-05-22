@@ -551,14 +551,14 @@ def main():
 
     if args.reprocess_only:
         if not raw_coeff_path.exists():
-            raise FileNotFoundError(
-                f"No checkpoint found at {raw_coeff_path}. Run without --reprocess-only first."
-            )
+            raise FileNotFoundError(f"No checkpoint found at {raw_coeff_path}. Run without --reprocess-only first.")
         results = pl.read_parquet(raw_coeff_path)
         regression_results = process_regression_results(results, position_map)
     else:
         toi_limits = RAPM_TOI_LIMITS
-        seasons = sorted(cast(pl.DataFrame, all_pbp_lazy.select(pl.col("season")).unique().collect())["season"].to_list())
+        seasons = sorted(
+            cast(pl.DataFrame, all_pbp_lazy.select(pl.col("season")).unique().collect())["season"].to_list()
+        )
         regression_results = run_all_regressions(
             stints_directory=stints_directory,
             position_map=position_map,

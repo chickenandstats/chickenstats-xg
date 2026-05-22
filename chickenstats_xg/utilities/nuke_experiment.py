@@ -176,9 +176,7 @@ def _mlflow_hard_delete_sql(
             # Resolve input UUIDs before deleting inputs
             if "inputs" in existing:
                 rows = conn.execute(
-                    text(
-                        "SELECT input_uuid FROM inputs " "WHERE destination_id = ANY(:ids) AND destination_type = 'RUN'"
-                    ),
+                    text("SELECT input_uuid FROM inputs WHERE destination_id = ANY(:ids) AND destination_type = 'RUN'"),
                     {"ids": run_ids},
                 ).fetchall()
                 input_uuids = [r[0] for r in rows]

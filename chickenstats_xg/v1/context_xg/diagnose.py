@@ -208,10 +208,7 @@ def check_feature_gain_concentration(strength: str) -> str:
         marker = " ←" if feat == top_feat and status != PASS else ""
         print(f"  {feat:<30}  {g:>12.1f}  {g / total:>5.1%}{marker}")
 
-    print(
-        f"\n  {status_icon(status)} Feature gain concentration — "
-        f"top feature: {top_feat} ({top_pct:.1%})  [{status}]"
-    )
+    print(f"\n  {status_icon(status)} Feature gain concentration — top feature: {top_feat} ({top_pct:.1%})  [{status}]")
     return status
 
 
@@ -410,7 +407,7 @@ def main() -> None:
     for s, statuses in all_statuses.items():
         if not statuses:
             continue
-        row = "  ".join(f"{status_icon(statuses.get(c, '—'))+'':>9}" for c in checks)
+        row = "  ".join(f"{status_icon(statuses.get(c, '—')) + '':>9}" for c in checks)
         print(f"  {s:<20}  {row}")
 
     # Advanced metrics summary table

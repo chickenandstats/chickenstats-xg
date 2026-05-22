@@ -233,7 +233,7 @@ def show_leaderboard(df: pd.DataFrame, n: int = 10) -> None:
 
     for i, row in career.head(n).iterrows():
         print(
-            f"  {i+1:>4}  {str(row['player']):>10}  {str(row['_pos_group']):>3}  "
+            f"  {i + 1:>4}  {str(row['player']):>10}  {str(row['_pos_group']):>3}  "
             f"{int(row['toi_minutes']):>8,}  {row[col]:>10.4f}"
         )
     print(f"  {'···':>4}")
@@ -309,7 +309,7 @@ def main() -> None:
     checks = ["coeff_range", "positional", "yoy_stability", "coverage"]
     headers = ["coeff_range", "positional", "yoy_stab", "coverage"]
     print(f"  {'Check':<20}  " + "  ".join(f"{h:>11}" for h in headers))
-    row = "  ".join(f"{_icon(statuses.get(c, '—'))+'':>11}" for c in checks)
+    row = "  ".join(f"{_icon(statuses.get(c, '—')) + '':>11}" for c in checks)
     print(f"  {'RAPM':<20}  {row}")
     overall = FAIL if FAIL in statuses.values() else (WARN if WARN in statuses.values() else PASS)
     print(f"\n  {_icon(overall)} Overall RAPM: {overall}")
